@@ -431,7 +431,7 @@ public class IabHelper {
         }
     }
 
-    /**
+/**
      * Handles an activity result that's part of the purchase flow in in-app
      * billing. If you are calling {@link #launchPurchaseFlow}, then you must
      * call this method from your Activity's {@link android.app.Activity
@@ -855,7 +855,12 @@ public class IabHelper {
     int queryPurchases(Inventory inv, String itemType) throws JSONException, RemoteException {
         // Query purchases
         logDebug("Querying owned items, item type: " + itemType);
-        logDebug("Package name: " + mContext.getPackageName());
+        try {
+            logDebug("Package name: " + mContext.getPackageName());
+        }
+        catch(NullPointerException e) {
+            e.printStackTrace();
+        }
         boolean verificationFailed = false;
         String continueToken = null;
 
