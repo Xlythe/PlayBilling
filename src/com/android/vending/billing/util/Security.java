@@ -15,24 +15,28 @@
 
 package com.android.vending.billing.util;
 
-import android.text.TextUtils;
-import android.util.Log;
-
-import java.security.*;
+import java.security.InvalidKeyException;
+import java.security.KeyFactory;
+import java.security.NoSuchAlgorithmException;
+import java.security.PublicKey;
+import java.security.Signature;
+import java.security.SignatureException;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.X509EncodedKeySpec;
 
+import android.text.TextUtils;
+import android.util.Log;
+
 /**
  * Security-related methods. For a secure implementation, all of this code
- * should be implemented on a server that communicates with the
- * application on the device. For the sake of simplicity and clarity of this
- * example, this code is included here and is executed on the device. If you
- * must verify the purchases on the phone, you should obfuscate this code to
- * make it harder for an attacker to replace the code with stubs that treat all
- * purchases as verified.
+ * should be implemented on a server that communicates with the application on
+ * the device. For the sake of simplicity and clarity of this example, this code
+ * is included here and is executed on the device. If you must verify the
+ * purchases on the phone, you should obfuscate this code to make it harder for
+ * an attacker to replace the code with stubs that treat all purchases as
+ * verified.
  */
 public class Security {
-
     private static final String TAG = "IABUtil/Security";
 
     private static final String KEY_FACTORY_ALGORITHM = "RSA";
@@ -40,8 +44,9 @@ public class Security {
 
     /**
      * Verifies that the data was signed with the given signature, and returns
-     * the verified purchase. The data is in JSON format and signed
-     * with a private key. The data also contains the {@link PurchaseState} and product ID of the purchase.
+     * the verified purchase. The data is in JSON format and signed with a
+     * private key. The data also contains the {@link PurchaseState} and product
+     * ID of the purchase.
      * 
      * @param base64PublicKey
      *            the base64-encoded public key to use for verifying.
@@ -51,21 +56,13 @@ public class Security {
      *            the signature for the data, signed with the private key
      */
     public static boolean verifyPurchase(String base64PublicKey, String signedData, String signature) {
-        if (signedData == null) {
-            Log.e(TAG, "data is null");
+        if(TextUtils.isEmpty(signedData) || TextUtils.isEmpty(base64PublicKey) || TextUtils.isEmpty(signature)) {
+            Log.e(TAG, "Purchase verification failed: missing data.");
             return false;
         }
 
-        boolean verified = false;
-        if (!TextUtils.isEmpty(signature)) {
-            PublicKey key = Security.generatePublicKey(base64PublicKey);
-            verified = Security.verify(key, signedData, signature);
-            if (!verified) {
-                Log.w(TAG, "signature does not match data.");
-                return false;
-            }
-        }
-        return true;
+        PublicKey key = Security.generatePublicKey(base64PublicKey);
+        return Security.verify(key, signedData, signature);
     }
 
     /**
@@ -82,12 +79,15 @@ public class Security {
             byte[] decodedKey = Base64.decode(encodedPublicKey);
             KeyFactory keyFactory = KeyFactory.getInstance(KEY_FACTORY_ALGORITHM);
             return keyFactory.generatePublic(new X509EncodedKeySpec(decodedKey));
-        } catch (NoSuchAlgorithmException e) {
+        }
+        catch(NoSuchAlgorithmException e) {
             throw new RuntimeException(e);
-        } catch (InvalidKeySpecException e) {
+        }
+        catch(InvalidKeySpecException e) {
             Log.e(TAG, "Invalid key specification.");
             throw new IllegalArgumentException(e);
-        } catch (Base64DecoderException e) {
+        }
+        catch(Base64DecoderException e) {
             Log.e(TAG, "Base64 decoding failed.");
             throw new IllegalArgumentException(e);
         }
@@ -111,18 +111,22 @@ public class Security {
             sig = Signature.getInstance(SIGNATURE_ALGORITHM);
             sig.initVerify(publicKey);
             sig.update(signedData.getBytes());
-            if (!sig.verify(Base64.decode(signature))) {
+            if(!sig.verify(Base64.decode(signature))) {
                 Log.e(TAG, "Signature verification failed.");
                 return false;
             }
             return true;
-        } catch (NoSuchAlgorithmException e) {
+        }
+        catch(NoSuchAlgorithmException e) {
             Log.e(TAG, "NoSuchAlgorithmException.");
-        } catch (InvalidKeyException e) {
+        }
+        catch(InvalidKeyException e) {
             Log.e(TAG, "Invalid key specification.");
-        } catch (SignatureException e) {
+        }
+        catch(SignatureException e) {
             Log.e(TAG, "Signature exception.");
-        } catch (Base64DecoderException e) {
+        }
+        catch(Base64DecoderException e) {
             Log.e(TAG, "Base64 decoding failed.");
         }
         return false;

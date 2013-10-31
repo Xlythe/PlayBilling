@@ -16,13 +16,11 @@
 package com.android.vending.billing.util;
 
 /**
- * Exception thrown when something went wrong with in-app billing.
- * An IabException has an associated IabResult (an error).
- * To get the IAB result that caused this exception to be thrown,
- * call {@link #getResult()}.
+ * Exception thrown when something went wrong with in-app billing. An
+ * IabException has an associated IabResult (an error). To get the IAB result
+ * that caused this exception to be thrown, call {@link #getResult()}.
  */
 public class IabException extends Exception {
-
     IabResult mResult;
 
     public IabException(IabResult r) {

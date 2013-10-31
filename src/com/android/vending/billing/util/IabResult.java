@@ -16,20 +16,19 @@
 package com.android.vending.billing.util;
 
 /**
- * Represents the result of an in-app billing operation.
- * A result is composed of a response code (an integer) and possibly a
- * message (String). You can get those by calling {@link #getResponse} and {@link #getMessage()}, respectively. You
- * can also inquire whether a result is a success or a failure by
- * calling {@link #isSuccess()} and {@link #isFailure()}.
+ * Represents the result of an in-app billing operation. A result is composed of
+ * a response code (an integer) and possibly a message (String). You can get
+ * those by calling {@link #getResponse} and {@link #getMessage()},
+ * respectively. You can also inquire whether a result is a success or a failure
+ * by calling {@link #isSuccess()} and {@link #isFailure()}.
  */
 public class IabResult {
-
     int mResponse;
     String mMessage;
 
     public IabResult(int response, String message) {
         mResponse = response;
-        if (message == null || message.trim().length() == 0) {
+        if(message == null || message.trim().length() == 0) {
             mMessage = IabHelper.getResponseDesc(response);
         }
         else {
@@ -53,7 +52,6 @@ public class IabResult {
         return !isSuccess();
     }
 
-    @Override
     public String toString() {
         return "IabResult: " + getMessage();
     }

@@ -22,7 +22,7 @@ import org.json.JSONObject;
  * Represents an in-app billing purchase.
  */
 public class Purchase {
-
+    String mItemType; // ITEM_TYPE_INAPP or ITEM_TYPE_SUBS
     String mOrderId;
     String mPackageName;
     String mSku;
@@ -33,7 +33,8 @@ public class Purchase {
     String mOriginalJson;
     String mSignature;
 
-    public Purchase(String jsonPurchaseInfo, String signature) throws JSONException {
+    public Purchase(String itemType, String jsonPurchaseInfo, String signature) throws JSONException {
+        mItemType = itemType;
         mOriginalJson = jsonPurchaseInfo;
         JSONObject o = new JSONObject(mOriginalJson);
         mOrderId = o.optString("orderId");
@@ -44,6 +45,10 @@ public class Purchase {
         mDeveloperPayload = o.optString("developerPayload");
         mToken = o.optString("token", o.optString("purchaseToken"));
         mSignature = signature;
+    }
+
+    public String getItemType() {
+        return mItemType;
     }
 
     public String getOrderId() {
@@ -84,6 +89,6 @@ public class Purchase {
 
     @Override
     public String toString() {
-        return "PurchaseInfo:" + mOriginalJson;
+        return "PurchaseInfo(type:" + mItemType + "):" + mOriginalJson;
     }
 }

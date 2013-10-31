@@ -20,7 +20,6 @@ package com.android.vending.billing.util;
  * @author nelson
  */
 public class Base64DecoderException extends Exception {
-
     public Base64DecoderException() {
         super();
     }
