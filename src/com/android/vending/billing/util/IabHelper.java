@@ -863,6 +863,8 @@ public class IabHelper {
         }
         catch(NullPointerException e) {
             e.printStackTrace();
+            // Context has died, fail transaction
+            return IABHELPER_VERIFICATION_FAILED;
         }
         boolean verificationFailed = false;
         String continueToken = null;
