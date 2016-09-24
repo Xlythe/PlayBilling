@@ -1,5 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.playbilling">
+    package="com.xlythe.playbilling">
+
+    <uses-permission android:name="com.android.vending.BILLING" />
 
     <application />
 
