@@ -30,7 +30,10 @@ import android.content.ServiceConnection;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.RemoteException;
+import android.support.annotation.UiThread;
+import android.support.annotation.WorkerThread;
 import android.text.TextUtils;
 import android.util.Log;
 
@@ -215,12 +218,20 @@ public class IabHelper {
         // Connection to IAB service
         logDebug("Starting in-app billing setup.");
         mServiceConn = new ServiceConnection() {
+            @WorkerThread
             @Override
             public void onServiceDisconnected(ComponentName name) {
                 logDebug("Billing service disconnected.");
-                mService = null;
+                new Handler(Looper.getMainLooper()).post(new Runnable() {
+                    @UiThread
+                    @Override
+                    public void run() {
+                        mService = null;
+                    }
+                });
             }
 
+            @UiThread
             @Override
             public void onServiceConnected(ComponentName name, IBinder service) {
                 if(mDisposed) return;
@@ -410,8 +421,7 @@ public class IabHelper {
             mRequestCode = requestCode;
             mPurchaseListener = listener;
             mPurchasingItemType = itemType;
-            act.startIntentSenderForResult(pendingIntent.getIntentSender(), requestCode, new Intent(), Integer.valueOf(0), Integer.valueOf(0),
-                    Integer.valueOf(0));
+            act.startIntentSenderForResult(pendingIntent.getIntentSender(), requestCode, new Intent(), 0, 0, 0);
         }
         catch(SendIntentException e) {
             logError("SendIntentException while launching purchase flow for sku " + sku);
