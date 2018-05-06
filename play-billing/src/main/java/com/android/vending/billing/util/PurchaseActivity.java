@@ -23,7 +23,18 @@ public abstract class PurchaseActivity extends AppCompatActivity implements OnIa
      * */
     protected abstract List<String> getSkus();
 
-    protected abstract void skuFound(String sku, boolean found);
+    @Deprecated
+    protected void skuFound(String sku, boolean found) {
+        if (found) {
+            onSkuFound(sku);
+        } else {
+            onSkuLost(sku);
+        }
+    }
+
+    protected void onSkuFound(String sku) {}
+
+    protected void onSkuLost(String sku) {}
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
