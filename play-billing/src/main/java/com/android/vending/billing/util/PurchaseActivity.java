@@ -2,12 +2,13 @@ package com.android.vending.billing.util;
 
 import android.content.Intent;
 import android.os.Bundle;
-import android.support.v7.app.AppCompatActivity;
 
 import com.android.vending.billing.util.IabHelper.OnIabPurchaseFinishedListener;
 import com.android.vending.billing.util.IabHelper.OnIabSetupFinishedListener;
 
 import java.util.List;
+
+import androidx.appcompat.app.AppCompatActivity;
 
 public abstract class PurchaseActivity extends AppCompatActivity implements OnIabSetupFinishedListener, OnIabPurchaseFinishedListener {
     private IabHelper billingHelper;

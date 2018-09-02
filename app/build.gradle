@@ -1,13 +1,13 @@
 apply plugin: 'com.android.application'
 
 android {
-    compileSdkVersion 27
-    buildToolsVersion '27.0.3'
+    compileSdkVersion 28
+    buildToolsVersion '28.0.2'
 
     defaultConfig {
         applicationId "com.xlythe.playbilling.demo"
         minSdkVersion 14
-        targetSdkVersion 27
+        targetSdkVersion 28
         versionCode 1
         versionName "1.0"
     }
@@ -23,8 +23,6 @@ android {
 }
 
 dependencies {
-    def withoutSupportLib = { exclude group: 'com.android.support' }
     implementation fileTree(include: ['*.jar'], dir: 'libs')
-    implementation 'com.android.support:appcompat-v7:27.+'
-    implementation project(':play-billing'), withoutSupportLib
+    implementation project(':play-billing')
 }

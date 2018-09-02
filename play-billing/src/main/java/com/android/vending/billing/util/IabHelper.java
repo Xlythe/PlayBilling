@@ -32,12 +32,13 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.RemoteException;
-import android.support.annotation.UiThread;
-import android.support.annotation.WorkerThread;
 import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.vending.billing.IInAppBillingService;
+
+import androidx.annotation.UiThread;
+import androidx.annotation.WorkerThread;
 
 /**
  * Provides convenience methods for in-app billing. You can create one instance
