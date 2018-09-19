@@ -1,18 +1,21 @@
 package com.android.vending.billing.util;
 
-import android.content.Intent;
 import android.os.Bundle;
 
-import com.android.vending.billing.util.IabHelper.OnIabPurchaseFinishedListener;
-import com.android.vending.billing.util.IabHelper.OnIabSetupFinishedListener;
+import com.android.billingclient.api.BillingClient;
+import com.android.billingclient.api.BillingClientStateListener;
+import com.android.billingclient.api.BillingFlowParams;
+import com.android.billingclient.api.Purchase;
+import com.android.billingclient.api.PurchasesUpdatedListener;
 
 import java.util.List;
 
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
-public abstract class PurchaseActivity extends AppCompatActivity implements OnIabSetupFinishedListener, OnIabPurchaseFinishedListener {
-    private IabHelper billingHelper;
-    protected boolean iabSetupSuccess = false;
+public abstract class PurchaseActivity extends AppCompatActivity {
+
+    private BillingClient mBillingClient;
 
     /**
      * Return your key from the Dev Console
@@ -24,30 +27,53 @@ public abstract class PurchaseActivity extends AppCompatActivity implements OnIa
      * */
     protected abstract List<String> getSkus();
 
-    @Deprecated
-    protected void skuFound(String sku, boolean found) {
-        if (found) {
-            onSkuFound(sku);
-        } else {
-            onSkuLost(sku);
-        }
-    }
-
     protected void onSkuFound(String sku) {}
 
     protected void onSkuLost(String sku) {}
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setResult(RESULT_CANCELED);
 
-        billingHelper = new IabHelper(this, getKey());
-        try {
-            billingHelper.startSetup(this);
-        } catch(NullPointerException e) {
-            e.printStackTrace();
-        }
+        mBillingClient = BillingClient.newBuilder(this).setListener(new PurchasesUpdatedListener() {
+            @Override
+            public void onPurchasesUpdated(@BillingClient.BillingResponse int responseCode, @Nullable List<Purchase> purchases) {
+                String sku = null; // TODO
+                Purchase purchase = null; // TODO
+                switch (responseCode) {
+                    case BillingClient.BillingResponse.FEATURE_NOT_SUPPORTED:
+                    case BillingClient.BillingResponse.SERVICE_DISCONNECTED:
+                    case BillingClient.BillingResponse.USER_CANCELED:
+                    case BillingClient.BillingResponse.SERVICE_UNAVAILABLE:
+                    case BillingClient.BillingResponse.BILLING_UNAVAILABLE:
+                    case BillingClient.BillingResponse.ITEM_UNAVAILABLE:
+                    case BillingClient.BillingResponse.DEVELOPER_ERROR:
+                    case BillingClient.BillingResponse.ERROR:
+                    case BillingClient.BillingResponse.ITEM_ALREADY_OWNED:
+                    case BillingClient.BillingResponse.ITEM_NOT_OWNED:
+                        onPurchaseFailed(sku);
+                        break;
+                    case BillingClient.BillingResponse.OK:
+                        onSkuFound(sku);
+                        onPurchaseSuccess(sku, purchase);
+                        break;
+                }
+            }
+        }).build();
+        mBillingClient.startConnection(new BillingClientStateListener() {
+            @Override
+            public void onBillingSetupFinished(@BillingClient.BillingResponse int billingResponseCode) {
+                if (billingResponseCode == BillingClient.BillingResponse.OK) {
+                    // The billing client is ready. You can query purchases here.
+                }
+            }
+            @Override
+            public void onBillingServiceDisconnected() {
+                // Try to restart the connection on the next request to
+                // Google Play by calling the startConnection() method.
+            }
+        });
     }
 
     @Override
@@ -81,53 +107,24 @@ public abstract class PurchaseActivity extends AppCompatActivity implements OnIa
 
     protected void onIabSetupFailure() {}
 
-    protected void onPurchaseSuccess(IabResult result, Purchase info) {}
+    protected void onPurchaseSuccess(String sku, Purchase info) {}
 
-    protected void onPurchaseFailed(IabResult result) {}
+    protected void onPurchaseFailed(String sku) {}
 
     public void purchaseItem(String sku) {
-        try {
-            billingHelper.launchPurchaseFlow(this, sku, 1001, this);
-        }
-        catch(IllegalStateException e) {
-            e.printStackTrace();
-        }
+        purchaseItem(sku, BillingClient.SkuType.INAPP);
     }
 
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        billingHelper.handleActivityResult(requestCode, resultCode, data);
-    }
-
-    /**
-     * Security Recommendation: When you receive the purchase response from Google Play, make sure to check the returned data signature, the orderId, and the developerPayload string in the Purchase object to make sure that you are getting the expected values. You should verify that the orderId is a unique value that you have not previously processed, and the developerPayload string matches the token that you sent previously with the purchase request. As a further security precaution, you should perform the verification on your own secure server.
-     */
-    @Override
-    public void onIabPurchaseFinished(IabResult result, Purchase info) {
-        if (result.isFailure()) {
-            onPurchaseFailed(result);
-        } else {
-            skuFound(info.getSku(), true);
-            onPurchaseSuccess(result, info);
-        }
+    public void purchaseItem(String sku, @BillingClient.SkuType String skuType) {
+        mBillingClient.launchBillingFlow(this, BillingFlowParams.newBuilder()
+                .setSku(sku)
+                .setType(skuType)
+                .build());
     }
 
     @Override
     protected void onDestroy() {
-        disposeBillingHelper();
+        mBillingClient.endConnection();
         super.onDestroy();
-    }
-
-    private void disposeBillingHelper() {
-        if(billingHelper != null) {
-            try {
-                billingHelper.dispose();
-            }
-            catch(IllegalArgumentException e) {
-                e.printStackTrace();
-            }
-        }
-        billingHelper = null;
     }
 }

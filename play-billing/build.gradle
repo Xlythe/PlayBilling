@@ -27,6 +27,7 @@ android {
 dependencies {
     api fileTree(include: ['*.jar'], dir: 'libs')
     api 'androidx.appcompat:appcompat:+'
+    api "com.android.billingclient:billing:+"
 }
 
 apply from: 'https://raw.githubusercontent.com/bourdakos1/jCenter-Upload/master/upload.gradle'
