@@ -2,6 +2,7 @@ package com.android.vending.billing.util;
 
 import android.app.Activity;
 import android.app.Application;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.util.Log;
 
@@ -17,6 +18,8 @@ import java.util.List;
 import java.util.Locale;
 
 import androidx.annotation.Nullable;
+import androidx.annotation.UiThread;
+import androidx.annotation.WorkerThread;
 
 public class PurchaseActivityLifecycleCallbacks implements Application.ActivityLifecycleCallbacks {
     private static final String TAG = "PlayBilling";
@@ -45,7 +48,7 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
             if (billingResponseCode == BillingClient.BillingResponse.OK) {
                 Log.d(TAG, "Billing successfully setup");
                 mBillingListener.onBillingAvailable();
-                mBillingClient.queryPurchaseHistoryAsync(BillingClient.SkuType.INAPP, mPurchaseHistoryResponseListener);
+                queryPurchases();
             } else {
                 Log.w(TAG, "Billing successfully setup, but received error " + PurchaseActivityLifecycleCallbacks.toString(billingResponseCode));
                 mBillingListener.onBillingUnavailable();
@@ -165,6 +168,37 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
                 .setSku(sku)
                 .setType(skuType)
                 .build());
+    }
+
+    /**
+     * Attempts to query the Play Store for In App Purchases.
+     * Uses {@link BillingListener#onPurchaseFound(String, Purchase)} to report purchases.
+     */
+    public void queryPurchases() {
+        Log.d(TAG, "Querying for the user's purchases. Checking cache first.");
+        new AsyncTask<Void, Integer, Purchase.PurchasesResult>() {
+            @WorkerThread
+            @Override
+            protected Purchase.PurchasesResult doInBackground(Void... voids) {
+                // Query the Play Store's cache on a background thread.
+                // Note: It's marked @UiThread, but it does an IPC call which generally recommends
+                // background threads.
+                return mBillingClient.queryPurchases(BillingClient.SkuType.INAPP);
+            }
+
+            @UiThread
+            @Override
+            protected void onPostExecute(Purchase.PurchasesResult result) {
+                Log.d(TAG, "Cache result retrieved: " + PurchaseActivityLifecycleCallbacks.toString(result.getResponseCode()));
+                mPurchaseHistoryResponseListener.onPurchaseHistoryResponse(result.getResponseCode(), result.getPurchasesList());
+
+                // We failed to find the user's purchase in the cache. Attempt a network call just to make sure.
+                if (result.getPurchasesList() == null || result.getPurchasesList().isEmpty()) {
+                    Log.d(TAG, "Cache was empty. Attempting to query purchase history.");
+                    mBillingClient.queryPurchaseHistoryAsync(BillingClient.SkuType.INAPP, mPurchaseHistoryResponseListener);
+                }
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     private static String toString(@BillingClient.BillingResponse int billingResponseCode) {
