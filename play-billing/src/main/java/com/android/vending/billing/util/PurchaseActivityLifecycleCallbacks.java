@@ -109,7 +109,7 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
         }
     };
 
-    PurchaseActivityLifecycleCallbacks(String apiKey, List<String> skus) {
+    public PurchaseActivityLifecycleCallbacks(String apiKey, List<String> skus) {
         mApiKey = apiKey;
         mSkus = new ArrayList<>(skus);
     }
