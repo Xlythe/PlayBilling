@@ -9,17 +9,27 @@ import android.util.Log;
 import com.android.billingclient.api.BillingClient;
 import com.android.billingclient.api.BillingClientStateListener;
 import com.android.billingclient.api.BillingFlowParams;
+import com.android.billingclient.api.BillingResult;
 import com.android.billingclient.api.Purchase;
+import com.android.billingclient.api.PurchaseHistoryRecord;
 import com.android.billingclient.api.PurchaseHistoryResponseListener;
 import com.android.billingclient.api.PurchasesUpdatedListener;
+import com.android.billingclient.api.SkuDetails;
+import com.android.billingclient.api.SkuDetailsParams;
+import com.android.billingclient.api.SkuDetailsResponseListener;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.UiThread;
 import androidx.annotation.WorkerThread;
+
+import org.json.JSONException;
 
 public class PurchaseActivityLifecycleCallbacks implements Application.ActivityLifecycleCallbacks {
     private static final String TAG = "PlayBilling";
@@ -44,13 +54,13 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
     // query for purchase history or purchase new items.
     private final BillingClientStateListener mBillingClientStateListener = new BillingClientStateListener() {
         @Override
-        public void onBillingSetupFinished(@BillingClient.BillingResponse int billingResponseCode) {
-            if (billingResponseCode == BillingClient.BillingResponse.OK) {
+        public void onBillingSetupFinished(BillingResult billingResult) {
+            if (billingResult.getResponseCode() == BillingClient.BillingResponseCode.OK) {
                 Log.d(TAG, "Billing successfully setup");
                 mBillingListener.onBillingAvailable();
                 queryPurchases();
             } else {
-                Log.w(TAG, "Billing successfully setup, but received error " + PurchaseActivityLifecycleCallbacks.toString(billingResponseCode));
+                Log.w(TAG, "Billing successfully setup, but received error " + PurchaseActivityLifecycleCallbacks.toString(billingResult.getResponseCode()));
                 mBillingListener.onBillingUnavailable();
             }
         }
@@ -64,18 +74,24 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
 
     private final PurchaseHistoryResponseListener mPurchaseHistoryResponseListener = new PurchaseHistoryResponseListener() {
         @Override
-        public void onPurchaseHistoryResponse(@BillingClient.BillingResponse int billingResponseCode, List<Purchase> purchases) {
-            if (billingResponseCode == BillingClient.BillingResponse.OK) {
+        public void onPurchaseHistoryResponse(BillingResult billingResult, List<PurchaseHistoryRecord> purchases) {
+            if (billingResult.getResponseCode() == BillingClient.BillingResponseCode.OK) {
                 // Ask the app for all in app purchases they expect the user can buy.
                 List<String> expectedPurchases = new ArrayList<>(mSkus);
 
                 // Ask the play store for the user's purchase history, and notify the app.
                 // This way, if the user bought a new device, the app can re-adjust its state.
-                for (Purchase purchase : purchases) {
-                    Log.d(TAG, "Discovered " + purchase.getSku() + " in the user's purchase history");
-                    if (Security.verifyPurchase(mApiKey, purchase.getOriginalJson(), purchase.getSignature())) {
-                        mBillingListener.onPurchaseFound(purchase.getSku(), purchase);
-                        expectedPurchases.remove(purchase.getSku());
+                for (PurchaseHistoryRecord purchaseHistoryRecord : purchases) {
+                    Log.d(TAG, "Discovered " + purchaseHistoryRecord.getSku() + " in the user's purchase history");
+                    if (Security.verifyPurchase(mApiKey, purchaseHistoryRecord.getOriginalJson(), purchaseHistoryRecord.getSignature())) {
+                        Purchase purchase;
+                        try {
+                            purchase = new Purchase(purchaseHistoryRecord.getOriginalJson(), purchaseHistoryRecord.getSignature());
+                        } catch (JSONException e) {
+                            continue;
+                        }
+                        mBillingListener.onPurchaseFound(purchaseHistoryRecord.getSku(), purchase);
+                        expectedPurchases.remove(purchaseHistoryRecord.getSku());
                     } else {
                         Log.w(TAG, "Failed to verify the purchase. Ignoring.");
                     }
@@ -88,7 +104,7 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
                     mBillingListener.onPurchaseLost(sku);
                 }
             } else {
-                Log.w(TAG, "Attempted to query purchase history, but received error: " + PurchaseActivityLifecycleCallbacks.toString(billingResponseCode));
+                Log.w(TAG, "Attempted to query purchase history, but received error: " + PurchaseActivityLifecycleCallbacks.toString(billingResult.getResponseCode()));
             }
         }
     };
@@ -96,8 +112,8 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
     // Fires whenever a purchase has been made, with the status of the purchase.
     private final PurchasesUpdatedListener mPurchasesUpdatedListener = new PurchasesUpdatedListener() {
         @Override
-        public void onPurchasesUpdated(@BillingClient.BillingResponse int billingResponseCode, List<Purchase> purchases) {
-            if (billingResponseCode == BillingClient.BillingResponse.OK) {
+        public void onPurchasesUpdated(BillingResult billingResult, List<Purchase> purchases) {
+            if (billingResult.getResponseCode() == BillingClient.BillingResponseCode.OK) {
                 for (Purchase purchase : purchases) {
                     Log.d(TAG, "User purchased " + purchase.getSku());
                     if (Security.verifyPurchase(mApiKey, purchase.getOriginalJson(), purchase.getSignature())) {
@@ -107,7 +123,7 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
                     }
                 }
             } else {
-                Log.w(TAG, "Attempted to purchase an item, but received error: " + PurchaseActivityLifecycleCallbacks.toString(billingResponseCode));
+                Log.w(TAG, "Attempted to purchase an item, but received error: " + PurchaseActivityLifecycleCallbacks.toString(billingResult.getResponseCode()));
             }
         }
     };
@@ -125,7 +141,7 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
     }
 
     @Override
-    public void onActivityCreated(Activity activity, @Nullable Bundle savedInstanceState) {
+    public void onActivityCreated(@NonNull Activity activity, @Nullable Bundle savedInstanceState) {
         if (mActivity != activity) {
             return;
         }
@@ -135,22 +151,22 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
     }
 
     @Override
-    public void onActivityStarted(Activity activity) {}
+    public void onActivityStarted(@NonNull Activity activity) {}
 
     @Override
-    public void onActivityResumed(Activity activity) {}
+    public void onActivityResumed(@NonNull Activity activity) {}
 
     @Override
-    public void onActivityPaused(Activity activity) {}
+    public void onActivityPaused(@NonNull Activity activity) {}
 
     @Override
-    public void onActivityStopped(Activity activity) {}
+    public void onActivityStopped(@NonNull Activity activity) {}
 
     @Override
-    public void onActivitySaveInstanceState(Activity activity, Bundle outState) {}
+    public void onActivitySaveInstanceState(@NonNull Activity activity, @NonNull Bundle outState) {}
 
     @Override
-    public void onActivityDestroyed(Activity activity) {
+    public void onActivityDestroyed(@NonNull Activity activity) {
         if (mActivity != activity) {
             return;
         }
@@ -164,10 +180,19 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
     }
 
     public void purchaseItem(String sku, @BillingClient.SkuType String skuType) {
-        mBillingClient.launchBillingFlow(mActivity, BillingFlowParams.newBuilder()
-                .setSku(sku)
+        SkuDetailsParams skuDetailsParams = SkuDetailsParams.newBuilder()
+                .setSkusList(Collections.singletonList(sku))
                 .setType(skuType)
-                .build());
+                .build();
+        mBillingClient.querySkuDetailsAsync(skuDetailsParams, (billingResult, skuDetailsList) -> {
+            if (billingResult.getResponseCode() == BillingClient.BillingResponseCode.OK) {
+                mBillingClient.launchBillingFlow(mActivity, BillingFlowParams.newBuilder()
+                        .setSkuDetails(skuDetailsList.get(0))
+                        .build());
+            } else {
+                Log.w(TAG, "Attempted to purchase an item, but received error: " + PurchaseActivityLifecycleCallbacks.toString(billingResult.getResponseCode()));
+            }
+        });
     }
 
     /**
@@ -190,7 +215,9 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
             @Override
             protected void onPostExecute(Purchase.PurchasesResult result) {
                 Log.d(TAG, "Cache result retrieved: " + PurchaseActivityLifecycleCallbacks.toString(result.getResponseCode()));
-                mPurchaseHistoryResponseListener.onPurchaseHistoryResponse(result.getResponseCode(), result.getPurchasesList());
+                mPurchaseHistoryResponseListener.onPurchaseHistoryResponse(
+                        BillingResult.newBuilder().setResponseCode(result.getResponseCode()).build(),
+                        toHistoryRecord(result.getPurchasesList()));
 
                 // We failed to find the user's purchase in the cache. Attempt a network call just to make sure.
                 if (result.getPurchasesList() == null || result.getPurchasesList().isEmpty()) {
@@ -201,29 +228,43 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
-    private static String toString(@BillingClient.BillingResponse int billingResponseCode) {
+    private static List<PurchaseHistoryRecord> toHistoryRecord(List<Purchase> purchases) {
+        List<PurchaseHistoryRecord> purchaseHistoryRecords = new ArrayList<>();
+        for (Purchase purchase : purchases) {
+            try {
+                purchaseHistoryRecords.add(new PurchaseHistoryRecord(purchase.getOriginalJson(), purchase.getSignature()));
+            } catch (JSONException e) {
+                Log.w(TAG, "Failed to convert Purchase " + purchase + " into a PurchaseHistoryRecord");
+            }
+        }
+        return purchaseHistoryRecords;
+    }
+
+    private static String toString(@BillingClient.BillingResponseCode int billingResponseCode) {
         switch (billingResponseCode) {
-            case BillingClient.BillingResponse.FEATURE_NOT_SUPPORTED:
+            case BillingClient.BillingResponseCode.FEATURE_NOT_SUPPORTED:
                 return String.format(Locale.US, "[%d]FEATURE_NOT_SUPPORTED", billingResponseCode);
-            case BillingClient.BillingResponse.SERVICE_DISCONNECTED:
+            case BillingClient.BillingResponseCode.SERVICE_DISCONNECTED:
                 return String.format(Locale.US, "[%d]SERVICE_DISCONNECTED", billingResponseCode);
-            case BillingClient.BillingResponse.USER_CANCELED:
+            case BillingClient.BillingResponseCode.SERVICE_TIMEOUT:
+                return String.format(Locale.US, "[%d]SERVICE_TIMEOUT", billingResponseCode);
+            case BillingClient.BillingResponseCode.USER_CANCELED:
                 return String.format(Locale.US, "[%d]USER_CANCELED", billingResponseCode);
-            case BillingClient.BillingResponse.SERVICE_UNAVAILABLE:
+            case BillingClient.BillingResponseCode.SERVICE_UNAVAILABLE:
                 return String.format(Locale.US, "[%d]SERVICE_UNAVAILABLE", billingResponseCode);
-            case BillingClient.BillingResponse.BILLING_UNAVAILABLE:
+            case BillingClient.BillingResponseCode.BILLING_UNAVAILABLE:
                 return String.format(Locale.US, "[%d]BILLING_UNAVAILABLE", billingResponseCode);
-            case BillingClient.BillingResponse.ITEM_UNAVAILABLE:
+            case BillingClient.BillingResponseCode.ITEM_UNAVAILABLE:
                 return String.format(Locale.US, "[%d]ITEM_UNAVAILABLE", billingResponseCode);
-            case BillingClient.BillingResponse.DEVELOPER_ERROR:
+            case BillingClient.BillingResponseCode.DEVELOPER_ERROR:
                 return String.format(Locale.US, "[%d]DEVELOPER_ERROR", billingResponseCode);
-            case BillingClient.BillingResponse.ERROR:
+            case BillingClient.BillingResponseCode.ERROR:
                 return String.format(Locale.US, "[%d]ERROR", billingResponseCode);
-            case BillingClient.BillingResponse.ITEM_ALREADY_OWNED:
+            case BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED:
                 return String.format(Locale.US, "[%d]ITEM_ALREADY_OWNED", billingResponseCode);
-            case BillingClient.BillingResponse.ITEM_NOT_OWNED:
+            case BillingClient.BillingResponseCode.ITEM_NOT_OWNED:
                 return String.format(Locale.US, "[%d]ITEM_NOT_OWNED", billingResponseCode);
-            case BillingClient.BillingResponse.OK:
+            case BillingClient.BillingResponseCode.OK:
                 return String.format(Locale.US, "[%d]OK", billingResponseCode);
             default:
                 return String.format(Locale.US, "[%d]UNKNOWN", billingResponseCode);
@@ -231,9 +272,9 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
     }
 
     public interface BillingListener {
-        void onPurchaseFound(String sku, Purchase purchase);
-        void onPurchaseLost(String sku);
-        void onBillingAvailable();
-        void onBillingUnavailable();
+        default void onPurchaseFound(String sku, Purchase purchase) {}
+        default void onPurchaseLost(String sku) {}
+        default void onBillingAvailable() {}
+        default void onBillingUnavailable() {}
     }
 }
