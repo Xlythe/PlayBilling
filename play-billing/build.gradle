@@ -27,6 +27,8 @@ dependencies {
     api fileTree(include: ['*.jar'], dir: 'libs')
     api 'androidx.appcompat:appcompat:+'
     api "com.android.billingclient:billing:+"
+    api "com.google.android.gms:play-services-base:+"
+    api "com.google.guava:guava:28.2-android"
 }
 
 apply from: 'https://raw.githubusercontent.com/bourdakos1/jCenter-Upload/master/upload.gradle'

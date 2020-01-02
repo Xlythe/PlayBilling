@@ -21,7 +21,7 @@ import android.util.Log;
  * an attacker to replace the code with stubs that treat all purchases as
  * verified.
  */
-class Security {
+public class Security {
     private static final String TAG = "IABUtil/Security";
 
     private static final String KEY_FACTORY_ALGORITHM = "RSA";

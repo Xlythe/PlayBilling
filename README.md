@@ -8,8 +8,19 @@ Where to Download
 -----------------
 ```groovy
 dependencies {
-  implementation 'com.xlythe:play-billing:2.3'
+  implementation 'com.xlythe:play-billing:3.0'
 }
+```
+
+
+How to use
+-----------------
+```java
+/** Listen to purchases (and refunds) */
+SupportBillingClient.getInstance(activity, apiKey).registerPurchaseListener(skus, purchaseListener);
+
+/** Purchase an item */
+SupportBillingClient.getInstance(activity, apiKey).purchaseItem(sku);
 ```
 
 License
