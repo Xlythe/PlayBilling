@@ -6,6 +6,8 @@ import android.util.Log;
 import androidx.annotation.Nullable;
 import androidx.collection.ArraySet;
 
+import com.android.billingclient.api.AcknowledgePurchaseParams;
+import com.android.billingclient.api.AcknowledgePurchaseResponseListener;
 import com.android.billingclient.api.BillingClient;
 import com.android.billingclient.api.BillingClient.SkuType;
 import com.android.billingclient.api.BillingClient.BillingResponseCode;
@@ -118,6 +120,22 @@ public class SupportBillingClient {
         }
 
         Log.d(TAG, "User purchased " + purchase.getSku());
+        if (!purchase.isAcknowledged()) {
+            AcknowledgePurchaseParams acknowledgePurchaseParams =
+                    AcknowledgePurchaseParams.newBuilder()
+                            .setPurchaseToken(purchase.getPurchaseToken())
+                            .build();
+
+            mBillingClient.acknowledgePurchase(acknowledgePurchaseParams, (billingResult) -> {
+                if (billingResult.getResponseCode() != BillingResponseCode.OK) {
+                    Log.w(TAG, "Failed to acknowledge purchase: " + toString(billingResult)
+                            + ". The purchase will continue to work but may be refunded in the future.");
+                    return;
+                }
+
+                Log.w(TAG, "Acknowledged purchase " + purchase);
+            });
+        }
         for (PurchaseListener l : mPurchaseListeners) {
             mActivity.runOnUiThread(() -> l.onPurchaseFound(purchase));
         }
