@@ -9,6 +9,10 @@ Where to Download
 ```groovy
 dependencies {
   implementation 'com.xlythe:play-billing:3.0'
+  implementation 'androidx.appcompat:appcompat:+'
+  implementation "com.android.billingclient:billing:+"
+  implementation "com.google.android.gms:play-services-base:+"
+  implementation "com.google.guava:guava:28.2-android"
 }
 ```
 
