@@ -8,11 +8,7 @@ Where to Download
 -----------------
 ```groovy
 dependencies {
-  implementation 'com.xlythe:play-billing:3.0.1'
-  implementation 'androidx.appcompat:appcompat:+'
-  implementation "com.android.billingclient:billing:+"
-  implementation "com.google.android.gms:play-services-base:+"
-  implementation "com.google.guava:guava:28.2-android"
+  implementation 'com.xlythe:play-billing:3.1'
 }
 ```
 
@@ -21,10 +17,10 @@ How to use
 -----------------
 ```java
 /** Listen to purchases (and refunds) */
-SupportBillingClient.getInstance(activity, apiKey).registerPurchaseListener(skus, purchaseListener);
+SupportBillingClient.getInstance(activity, apiKey).registerPurchaseListener(productIds, purchaseListener);
 
 /** Purchase an item */
-SupportBillingClient.getInstance(activity, apiKey).purchaseItem(sku);
+SupportBillingClient.getInstance(activity, apiKey).purchaseItem(productId);
 ```
 
 License
