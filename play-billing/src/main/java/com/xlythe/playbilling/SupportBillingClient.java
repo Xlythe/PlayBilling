@@ -3,22 +3,26 @@ package com.xlythe.playbilling;
 import android.app.Activity;
 import android.util.Log;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.collection.ArraySet;
 
 import com.android.billingclient.api.AcknowledgePurchaseParams;
-import com.android.billingclient.api.AcknowledgePurchaseResponseListener;
 import com.android.billingclient.api.BillingClient;
-import com.android.billingclient.api.BillingClient.SkuType;
+import com.android.billingclient.api.BillingClient.ProductType;
 import com.android.billingclient.api.BillingClient.BillingResponseCode;
 import com.android.billingclient.api.BillingClientStateListener;
 import com.android.billingclient.api.BillingFlowParams;
+import com.android.billingclient.api.BillingFlowParams.ProductDetailsParams;
 import com.android.billingclient.api.BillingResult;
+import com.android.billingclient.api.ProductDetails;
 import com.android.billingclient.api.Purchase;
 import com.android.billingclient.api.PurchaseHistoryRecord;
 import com.android.billingclient.api.PurchaseHistoryResponseListener;
-import com.android.billingclient.api.SkuDetails;
-import com.android.billingclient.api.SkuDetailsParams;
+import com.android.billingclient.api.PurchasesResponseListener;
+import com.android.billingclient.api.QueryProductDetailsParams;
+import com.android.billingclient.api.QueryPurchaseHistoryParams;
+import com.android.billingclient.api.QueryPurchasesParams;
 import com.android.vending.billing.util.Security;
 import com.google.android.gms.common.api.ApiException;
 import com.google.android.gms.common.api.Status;
@@ -64,7 +68,7 @@ public class SupportBillingClient {
 
     public interface PurchaseListener {
         default void onPurchaseFound(Purchase purchase) {}
-        default void onPurchaseLost(String sku) {}
+        default void onPurchaseLost(String productId) {}
     }
 
     private enum ServiceConnectionState {
@@ -98,8 +102,10 @@ public class SupportBillingClient {
                         return;
                     }
 
-                    for (Purchase purchase : purchases) {
-                        onPurchaseFound(purchase);
+                    if (purchases != null) {
+                        for (Purchase purchase : purchases) {
+                            onPurchaseFound(purchase);
+                        }
                     }
                 })
                 .build();
@@ -108,18 +114,22 @@ public class SupportBillingClient {
     private void onPurchaseFound(Purchase purchase) {
         if (!Security.verifyPurchase(mApiKey, purchase.getOriginalJson(), purchase.getSignature())) {
             Log.w(TAG, "Failed to verify purchase " + purchase + ". Ignoring.");
-            onPurchaseLost(purchase.getSku());
+            for (String productId : purchase.getProducts()) {
+                onPurchaseLost(productId);
+            }
             return;
         }
 
 
         if (purchase.getPurchaseState() != Purchase.PurchaseState.PURCHASED) {
             Log.w(TAG, "Purchase " + purchase + " has not been paid for yet. Ignoring.");
-            onPurchaseLost(purchase.getSku());
+            for (String productId : purchase.getProducts()) {
+                onPurchaseLost(productId);
+            }
             return;
         }
 
-        Log.d(TAG, "User purchased " + purchase.getSku());
+        Log.d(TAG, "User purchased " + purchase);
         if (!purchase.isAcknowledged()) {
             AcknowledgePurchaseParams acknowledgePurchaseParams =
                     AcknowledgePurchaseParams.newBuilder()
@@ -141,50 +151,55 @@ public class SupportBillingClient {
         }
     }
 
-    private void onPurchaseLost(String sku) {
-        Log.d(TAG, "User has no longer purchased " + sku);
+    private void onPurchaseLost(String productId) {
+        Log.d(TAG, "User has no longer purchased " + productId);
         for (PurchaseListener l : mPurchaseListeners) {
-            mActivity.runOnUiThread(() -> l.onPurchaseLost(sku));
+            mActivity.runOnUiThread(() -> l.onPurchaseLost(productId));
         }
     }
 
     /**
-     * Launches a dialog for the user to purchase the given sku. If successful,
+     * Launches a dialog for the user to purchase the given product ID. If successful,
      * {@link PurchaseListener#onPurchaseFound(Purchase)} will be called.
      */
-    public Task<BillingResult> purchaseItem(String sku) {
-        return purchaseItem(sku, SkuType.INAPP);
+    public Task<BillingResult> purchaseItem(String productId) {
+        return purchaseItem(productId, ProductType.INAPP);
     }
 
     /**
-     * Launches a dialog for the user to purchase the given sku. If successful,
+     * Launches a dialog for the user to purchase the given product ID. If successful,
      * {@link PurchaseListener#onPurchaseFound(Purchase)} will be called.
      */
-    public Task<BillingResult> purchaseItem(String sku, @SkuType String skuType) {
+    public Task<BillingResult> purchaseItem(String productId, @ProductType String productType) {
         Callable<BillingResult> callable = () -> {
             // Connect to the Play Store. This will throw an exception if we fail to connect.
             Tasks.await(verifyBillingSupport());
 
-            // Look up the sku details.
-            SettableFuture<SkuDetails> skuDetailsFuture = SettableFuture.create();
-            SkuDetailsParams skuDetailsParams = SkuDetailsParams.newBuilder()
-                    .setSkusList(Collections.singletonList(sku))
-                    .setType(skuType)
+            // Look up the product details.
+            SettableFuture<ProductDetails> productDetailsFuture = SettableFuture.create();
+            QueryProductDetailsParams productDetailsParams = QueryProductDetailsParams.newBuilder()
+                    .setProductList(Collections.singletonList(QueryProductDetailsParams.Product.newBuilder().setProductId(productId).setProductType(productType).build()))
                     .build();
-            mBillingClient.querySkuDetailsAsync(skuDetailsParams, (billingResult, skuDetailsList) -> {
+            mBillingClient.queryProductDetailsAsync(productDetailsParams, (billingResult, productDetailsList) -> {
                 if (billingResult.getResponseCode() != BillingResponseCode.OK) {
                     Log.w(TAG, "Attempted to purchase an item, but received error: " + toString(billingResult));
-                    skuDetailsFuture.setException(new Exception());
+                    productDetailsFuture.setException(new Exception());
                     return;
                 }
 
-                skuDetailsFuture.set(skuDetailsList.get(0));
+                if (productDetailsList.isEmpty()) {
+                    Log.w(TAG, "Attempted to purchase an item, but received an empty list");
+                    productDetailsFuture.setException(new Exception());
+                    return;
+                }
+
+                productDetailsFuture.set(productDetailsList.get(0));
             });
 
-            // Launch the billing flow for the sku.
-            SkuDetails skuDetails = skuDetailsFuture.get();
+            // Launch the billing flow for the product.
+            ProductDetails productDetails = productDetailsFuture.get();
             BillingResult billingResult = mBillingClient.launchBillingFlow(mActivity, BillingFlowParams.newBuilder()
-                    .setSkuDetails(skuDetails)
+                    .setProductDetailsParamsList(Collections.singletonList(ProductDetailsParams.newBuilder().setProductDetails(productDetails).build()))
                     .build());
             if (billingResult.getResponseCode() != BillingResponseCode.OK) {
                 throw new ApiException(new Status(billingResult.getResponseCode(), "Failed to purchase an item from the Play Store: " + toString(billingResult)));
@@ -201,54 +216,71 @@ public class SupportBillingClient {
      * reinstalled the application). The listener will continue to be called whenever
      * {@link #purchaseItem(String)} results in a successful purchase.
      */
-    public Task<BillingResult> registerPurchaseListener(List<String> skus, PurchaseListener purchaseListener) {
+    public Task<BillingResult> registerPurchaseListener(List<String> productIds, PurchaseListener purchaseListener) {
         if (mPurchaseListeners.contains(purchaseListener)) {
             return Tasks.forResult(BillingResult.newBuilder().setResponseCode(BillingResponseCode.DEVELOPER_ERROR).build());
         }
 
         mPurchaseListeners.add(purchaseListener);
-        return queryPurchases(skus);
+        return queryPurchases(productIds);
     }
 
     public Task<BillingResult> unregisterPurchaseListener(PurchaseListener purchaseListener) {
-        mPurchaseListeners.remove(purchaseListener);
-        return Tasks.forException(new Exception("Unsupported"));
+        if (mPurchaseListeners.remove(purchaseListener)) {
+            return Tasks.forResult(BillingResult.newBuilder().setResponseCode(BillingResponseCode.OK).build());
+        } else {
+            return Tasks.forResult(BillingResult.newBuilder().setResponseCode(BillingResponseCode.DEVELOPER_ERROR).build());
+        }
     }
 
-    public Task<BillingResult> queryPurchases(List<String> skus) {
+    public Task<BillingResult> queryPurchases(List<String> productIds) {
         Callable<BillingResult> callable = () -> {
             // Connect to the Play Store. This will throw an exception if we fail to connect.
             Tasks.await(verifyBillingSupport());
 
             // Look up the purchases in the Play Store's on-device cache.
-            Purchase.PurchasesResult purchasesResult = mBillingClient.queryPurchases(SkuType.INAPP);
-            if (purchasesResult.getPurchasesList() != null && !purchasesResult.getPurchasesList().isEmpty()) {
+            SettableFuture<List<Purchase>> purchasesFuture = SettableFuture.create();
+            PurchasesResponseListener purchasesResponseListener = (billingResult, purchases) -> {
+                if (billingResult.getResponseCode() != BillingResponseCode.OK) {
+                    Log.w(TAG, "Attempted to query purchase history, but received error: " + toString(billingResult));
+                    purchasesFuture.setException(new Exception());
+                    return;
+                }
+
+                purchasesFuture.set(purchases);
+            };
+            mBillingClient.queryPurchasesAsync(QueryPurchasesParams.newBuilder().setProductType(ProductType.INAPP).build(), purchasesResponseListener);
+            List<Purchase> purchases = purchasesFuture.get();
+            if (purchases != null && !purchases.isEmpty()) {
                 // We successfully found purchases in the cache. We can report these right away.
-                for (Purchase purchase : purchasesResult.getPurchasesList()) {
+                for (Purchase purchase : purchases) {
                     onPurchaseFound(purchase);
                 }
                 return BillingResult.newBuilder().setResponseCode(BillingResponseCode.OK).build();
             }
 
             // There was nothing in the Play Store's cache, but we can still make a live network query.
-            SettableFuture<List<PurchaseHistoryRecord>> future = SettableFuture.create();
+            SettableFuture<List<PurchaseHistoryRecord>> purchaseHistoryRecordFuture = SettableFuture.create();
             PurchaseHistoryResponseListener purchaseHistoryResponseListener = (billingResult, purchaseHistoryRecords) -> {
                 if (billingResult.getResponseCode() != BillingClient.BillingResponseCode.OK) {
                     Log.w(TAG, "Attempted to query purchase history, but received error: " + toString(billingResult));
-                    future.setException(new Exception());
+                    purchaseHistoryRecordFuture.setException(new Exception());
                     return;
                 }
 
-                future.set(purchaseHistoryRecords);
+                purchaseHistoryRecordFuture.set(purchaseHistoryRecords);
             };
-            mBillingClient.queryPurchaseHistoryAsync(BillingClient.SkuType.INAPP, purchaseHistoryResponseListener);
+            QueryPurchaseHistoryParams queryPurchaseHistoryParams = QueryPurchaseHistoryParams.newBuilder()
+                    .setProductType(ProductType.INAPP)
+                    .build();
+            mBillingClient.queryPurchaseHistoryAsync(queryPurchaseHistoryParams, purchaseHistoryResponseListener);
 
-            // For every record that's found, report onPurchaseFound. For each sku that we did
+            // For every record that's found, report onPurchaseFound. For each product that we did
             // not find, report onPurchaseLost.
-            List<PurchaseHistoryRecord> purchaseHistoryRecords = future.get();
-            List<String> expectedPurchases = new ArrayList<>(skus);
+            List<PurchaseHistoryRecord> purchaseHistoryRecords = purchaseHistoryRecordFuture.get();
+            List<String> expectedPurchases = new ArrayList<>(productIds);
             for (PurchaseHistoryRecord purchaseHistoryRecord : purchaseHistoryRecords) {
-                Log.d(TAG, "Discovered " + purchaseHistoryRecord.getSku() + " in the user's purchase history");
+                Log.d(TAG, "Discovered " + purchaseHistoryRecord.getProducts() + " in the user's purchase history");
                 Purchase purchase;
                 try {
                     purchase = new Purchase(purchaseHistoryRecord.getOriginalJson(), purchaseHistoryRecord.getSignature());
@@ -256,14 +288,14 @@ public class SupportBillingClient {
                     continue;
                 }
                 onPurchaseFound(purchase);
-                expectedPurchases.remove(purchaseHistoryRecord.getSku());
+                expectedPurchases.removeAll(purchaseHistoryRecord.getProducts());
             }
 
             // For everything the play store did not have a purchase history for, report it as such.
             // This way, if the purchase was refunded, the app can re-adjust its state.
-            for (String sku : expectedPurchases) {
-                Log.d(TAG, "Failed to find " + sku + " in the user's purchase history");
-                onPurchaseLost(sku);
+            for (String productId : expectedPurchases) {
+                Log.d(TAG, "Failed to find " + productId + " in the user's purchase history");
+                onPurchaseLost(productId);
             }
             return BillingResult.newBuilder().setResponseCode(BillingResponseCode.OK).build();
         };
@@ -287,7 +319,7 @@ public class SupportBillingClient {
             SettableFuture<BillingResult> future = SettableFuture.create();
             mBillingClient.startConnection(new BillingClientStateListener() {
                 @Override
-                public void onBillingSetupFinished(BillingResult billingResult) {
+                public void onBillingSetupFinished(@NonNull BillingResult billingResult) {
                     future.set(billingResult);
                 }
 

@@ -1,11 +1,11 @@
 apply plugin: 'com.android.library'
 
 android {
-    compileSdkVersion 29
+    compileSdkVersion 33
 
     defaultConfig {
         minSdkVersion 14
-        targetSdkVersion 29
+        targetSdkVersion 33
         versionCode 1
         versionName project.property("bintray.libraryVersion")
     }
@@ -25,10 +25,8 @@ android {
 
 dependencies {
     api fileTree(include: ['*.jar'], dir: 'libs')
-    api 'androidx.appcompat:appcompat:+'
-    api "com.android.billingclient:billing:+"
-    api "com.google.android.gms:play-services-base:+"
-    api "com.google.guava:guava:28.2-android"
+    api 'androidx.appcompat:appcompat:[1.5.0,)'
+    api 'com.android.billingclient:billing:[5.0.0,)'
+    api 'com.google.android.gms:play-services-base:[18.1.0,)'
+    api "com.google.guava:guava:[31.1-android,)"
 }
-
-apply from: 'https://raw.githubusercontent.com/bourdakos1/jCenter-Upload/master/upload.gradle'

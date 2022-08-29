@@ -4,7 +4,7 @@ import android.app.Activity;
 import android.app.Application;
 import android.os.Bundle;
 
-import com.android.billingclient.api.BillingClient;
+import com.android.billingclient.api.BillingClient.ProductType;
 import com.android.billingclient.api.Purchase;
 import com.xlythe.playbilling.SupportBillingClient;
 
@@ -19,7 +19,7 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
     private final String mApiKey;
 
     // The various in app purchases this app is interested in.
-    private final List<String> mSkus;
+    private final List<String> mProductIds;
 
     // Our client's registered callback where we report billing events.
     @Nullable private BillingListener mBillingListener;
@@ -34,18 +34,28 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
     private final SupportBillingClient.PurchaseListener mPurchaseListener = new SupportBillingClient.PurchaseListener() {
         @Override
         public void onPurchaseFound(Purchase purchase) {
-            mBillingListener.onPurchaseFound(purchase.getSku(), purchase);
+            if (mBillingListener == null) {
+                return;
+            }
+
+            for (String productId : purchase.getProducts()) {
+                mBillingListener.onPurchaseFound(productId, purchase);
+            }
         }
 
         @Override
-        public void onPurchaseLost(String sku) {
-            mBillingListener.onPurchaseLost(sku);
+        public void onPurchaseLost(String productId) {
+            if (mBillingListener == null) {
+                return;
+            }
+
+            mBillingListener.onPurchaseLost(productId);
         }
     };
 
-    public PurchaseActivityLifecycleCallbacks(String apiKey, List<String> skus) {
+    public PurchaseActivityLifecycleCallbacks(String apiKey, List<String> productIds) {
         mApiKey = apiKey;
-        mSkus = new ArrayList<>(skus);
+        mProductIds = new ArrayList<>(productIds);
     }
 
     public void register(Activity activity, BillingListener billingListener) {
@@ -62,20 +72,20 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
         }
 
         mBillingClient = SupportBillingClient.getInstance(activity, mApiKey);
-        mBillingClient.registerPurchaseListener(mSkus, new SupportBillingClient.PurchaseListener() {
-            @Override
-            public void onPurchaseFound(Purchase purchase) {
-                mBillingListener.onPurchaseFound(purchase.getSku(), purchase);
-            }
-
-            @Override
-            public void onPurchaseLost(String sku) {
-                mBillingListener.onPurchaseLost(sku);
-            }
-        });
+        mBillingClient.registerPurchaseListener(mProductIds, mPurchaseListener);
         mBillingClient.verifyBillingSupport()
-                .addOnSuccessListener(billingResult -> mBillingListener.onBillingAvailable())
-                .addOnFailureListener(billingResult -> mBillingListener.onBillingUnavailable());
+                .addOnSuccessListener(billingResult -> {
+                    if (mBillingListener == null) {
+                        return;
+                    }
+                    mBillingListener.onBillingAvailable();
+                })
+                .addOnFailureListener(billingResult -> {
+                    if (mBillingListener == null) {
+                        return;
+                    }
+                    mBillingListener.onBillingUnavailable();
+                });
     }
 
     @Override
@@ -99,26 +109,16 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
             return;
         }
 
-        mBillingClient.unregisterPurchaseListener(new SupportBillingClient.PurchaseListener() {
-            @Override
-            public void onPurchaseFound(Purchase purchase) {
-                mBillingListener.onPurchaseFound(purchase.getSku(), purchase);
-            }
-
-            @Override
-            public void onPurchaseLost(String sku) {
-                mBillingListener.onPurchaseLost(sku);
-            }
-        });
+        mBillingClient.unregisterPurchaseListener(mPurchaseListener);
         mActivity.getApplication().unregisterActivityLifecycleCallbacks(this);
     }
 
-    public void purchaseItem(String sku) {
-        mBillingClient.purchaseItem(sku);
+    public void purchaseItem(String productId) {
+        mBillingClient.purchaseItem(productId);
     }
 
-    public void purchaseItem(String sku, @BillingClient.SkuType String skuType) {
-        mBillingClient.purchaseItem(sku, skuType);
+    public void purchaseItem(String productId, @ProductType String productType) {
+        mBillingClient.purchaseItem(productId, productType);
     }
 
     /**
@@ -126,12 +126,12 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
      * Uses {@link BillingListener#onPurchaseFound(String, Purchase)} to report purchases.
      */
     public void queryPurchases() {
-        mBillingClient.queryPurchases(mSkus);
+        mBillingClient.queryPurchases(mProductIds);
     }
 
     public interface BillingListener {
-        default void onPurchaseFound(String sku, Purchase purchase) {}
-        default void onPurchaseLost(String sku) {}
+        default void onPurchaseFound(String productId, Purchase purchase) {}
+        default void onPurchaseLost(String productId) {}
         default void onBillingAvailable() {}
         default void onBillingUnavailable() {}
     }
