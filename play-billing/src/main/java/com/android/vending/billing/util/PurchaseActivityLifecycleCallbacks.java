@@ -5,7 +5,9 @@ import android.app.Application;
 import android.os.Bundle;
 
 import com.android.billingclient.api.BillingClient.ProductType;
+import com.android.billingclient.api.BillingResult;
 import com.android.billingclient.api.Purchase;
+import com.google.android.gms.tasks.Task;
 import com.xlythe.playbilling.SupportBillingClient;
 
 import java.util.ArrayList;
@@ -113,20 +115,20 @@ public class PurchaseActivityLifecycleCallbacks implements Application.ActivityL
         mActivity.getApplication().unregisterActivityLifecycleCallbacks(this);
     }
 
-    public void purchaseItem(String productId) {
-        mBillingClient.purchaseItem(productId);
+    public Task<BillingResult> purchaseItem(String productId) {
+        return mBillingClient.purchaseItem(productId);
     }
 
-    public void purchaseItem(String productId, @ProductType String productType) {
-        mBillingClient.purchaseItem(productId, productType);
+    public Task<BillingResult> purchaseItem(String productId, @ProductType String productType) {
+        return mBillingClient.purchaseItem(productId, productType);
     }
 
     /**
      * Attempts to query the Play Store for In App Purchases.
      * Uses {@link BillingListener#onPurchaseFound(String, Purchase)} to report purchases.
      */
-    public void queryPurchases() {
-        mBillingClient.queryPurchases(mProductIds);
+    public Task<BillingResult> queryPurchases() {
+        return mBillingClient.queryPurchases(mProductIds);
     }
 
     public interface BillingListener {

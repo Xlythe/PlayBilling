@@ -5,6 +5,7 @@ import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.WorkerThread;
 import androidx.collection.ArraySet;
 
 import com.android.billingclient.api.AcknowledgePurchaseParams;
@@ -37,6 +38,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -173,7 +175,7 @@ public class SupportBillingClient {
     public Task<BillingResult> purchaseItem(String productId, @ProductType String productType) {
         Callable<BillingResult> callable = () -> {
             // Connect to the Play Store. This will throw an exception if we fail to connect.
-            Tasks.await(verifyBillingSupport());
+            ensureConnected();
 
             // Look up the product details.
             SettableFuture<ProductDetails> productDetailsFuture = SettableFuture.create();
@@ -199,7 +201,7 @@ public class SupportBillingClient {
             // Launch the billing flow for the product.
             ProductDetails productDetails = productDetailsFuture.get();
             BillingResult billingResult = mBillingClient.launchBillingFlow(mActivity, BillingFlowParams.newBuilder()
-                    .setProductDetailsParamsList(Collections.singletonList(ProductDetailsParams.newBuilder().setProductDetails(productDetails).build()))
+                    .setProductDetailsParamsList(Collections.singletonList(ProductDetailsParams.newBuilder().setProductDetails(Objects.requireNonNull(productDetails)).build()))
                     .build());
             if (billingResult.getResponseCode() != BillingResponseCode.OK) {
                 throw new ApiException(new Status(billingResult.getResponseCode(), "Failed to purchase an item from the Play Store: " + toString(billingResult)));
@@ -207,7 +209,9 @@ public class SupportBillingClient {
             return billingResult;
         };
 
-        return Tasks.call(mExecutor, callable);
+        return Tasks.call(mExecutor, callable)
+                .addOnSuccessListener(result -> Log.v(TAG, "Successfully purchased item " + productId))
+                .addOnFailureListener(e -> Log.w(TAG, "Failed to purchase item " + productId));
     }
 
     /**
@@ -236,7 +240,7 @@ public class SupportBillingClient {
     public Task<BillingResult> queryPurchases(List<String> productIds) {
         Callable<BillingResult> callable = () -> {
             // Connect to the Play Store. This will throw an exception if we fail to connect.
-            Tasks.await(verifyBillingSupport());
+            ensureConnected();
 
             // Look up the purchases in the Play Store's on-device cache.
             SettableFuture<List<Purchase>> purchasesFuture = SettableFuture.create();
@@ -279,7 +283,7 @@ public class SupportBillingClient {
             // not find, report onPurchaseLost.
             List<PurchaseHistoryRecord> purchaseHistoryRecords = purchaseHistoryRecordFuture.get();
             List<String> expectedPurchases = new ArrayList<>(productIds);
-            for (PurchaseHistoryRecord purchaseHistoryRecord : purchaseHistoryRecords) {
+            for (PurchaseHistoryRecord purchaseHistoryRecord : Objects.requireNonNull(purchaseHistoryRecords)) {
                 Log.d(TAG, "Discovered " + purchaseHistoryRecord.getProducts() + " in the user's purchase history");
                 Purchase purchase;
                 try {
@@ -305,46 +309,48 @@ public class SupportBillingClient {
 
     // Silently connects to the Play Store, if we're not already connected.
     public Task<BillingResult> verifyBillingSupport() {
+        return Tasks.call(mExecutor, this::ensureConnected);
+    }
+
+    @WorkerThread
+    private BillingResult ensureConnected() throws Exception {
         // A shortcut! We're already connected, so we can no-op here.
         if (mServiceConnectionState == ServiceConnectionState.CONNECTED) {
             // Reset the disconnect timer, since there's user interaction.
             mExecutor.remove(mDisconnectTask);
             mExecutor.schedule(mDisconnectTask, 15, TimeUnit.SECONDS);
-            return Tasks.forResult(BillingResult.newBuilder().setResponseCode(BillingResponseCode.OK).build());
+            return BillingResult.newBuilder().setResponseCode(BillingResponseCode.OK).build();
         }
 
         // Darn, not connected yet. We'll have to do this the long way.
         mServiceConnectionState = ServiceConnectionState.CONNECTING;
-        Callable<BillingResult> callable = () -> {
-            SettableFuture<BillingResult> future = SettableFuture.create();
-            mBillingClient.startConnection(new BillingClientStateListener() {
-                @Override
-                public void onBillingSetupFinished(@NonNull BillingResult billingResult) {
-                    future.set(billingResult);
-                }
 
-                @Override
-                public void onBillingServiceDisconnected() {
-                    Log.w(TAG, "Billing temporarily disconnected");
-                    mServiceConnectionState = ServiceConnectionState.DISCONNECTED;
-                }
-            });
-
-            // If we failed to connect, throw an exception so the Task will return a failure.
-            // It's not smart enough to know how to read the internals of BillingResult.
-            BillingResult billingResult = future.get();
-            if (billingResult.getResponseCode() != BillingResponseCode.OK) {
-                throw new ApiException(new Status(billingResult.getResponseCode(), "Failed to connect to the Play Store: " + toString(billingResult)));
+        SettableFuture<BillingResult> future = SettableFuture.create();
+        mBillingClient.startConnection(new BillingClientStateListener() {
+            @Override
+            public void onBillingSetupFinished(@NonNull BillingResult billingResult) {
+                future.set(billingResult);
             }
 
-            // If we succeeded in connecting, then we need to start a timer to disconnect in the
-            // future. Otherwise, we'll get trapped in a memory leak.
-            mExecutor.remove(mDisconnectTask);
-            mExecutor.schedule(mDisconnectTask, 15, TimeUnit.SECONDS);
-            return billingResult;
-        };
+            @Override
+            public void onBillingServiceDisconnected() {
+                Log.w(TAG, "Billing temporarily disconnected");
+                mServiceConnectionState = ServiceConnectionState.DISCONNECTED;
+            }
+        });
 
-        return Tasks.call(mExecutor, callable);
+        // If we failed to connect, throw an exception so the Task will return a failure.
+        // It's not smart enough to know how to read the internals of BillingResult.
+        BillingResult billingResult = future.get();
+        if (Objects.requireNonNull(billingResult).getResponseCode() != BillingResponseCode.OK) {
+            throw new ApiException(new Status(billingResult.getResponseCode(), "Failed to connect to the Play Store: " + toString(billingResult)));
+        }
+
+        // If we succeeded in connecting, then we need to start a timer to disconnect in the
+        // future. Otherwise, we'll get trapped in a memory leak.
+        mExecutor.remove(mDisconnectTask);
+        mExecutor.schedule(mDisconnectTask, 15, TimeUnit.SECONDS);
+        return billingResult;
     }
 
     private void attemptToDisconnect() {
