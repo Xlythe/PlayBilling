@@ -97,7 +97,7 @@ dependencies {
     api 'androidx.appcompat:appcompat:[1.6.1,)'
     api 'com.android.billingclient:billing:[5.0.0,)'
     api 'com.google.android.gms:play-services-base:[18.2.0,)'
-    api "com.google.guava:guava:[31.1-android,)"
+    api 'com.google.guava:guava:[31.1-android,)'
     constraints {
         implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.0") {
             because("kotlin-stdlib-jdk7 is now a part of kotlin-stdlib")
