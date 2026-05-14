@@ -16,13 +16,11 @@ import com.android.billingclient.api.BillingClientStateListener;
 import com.android.billingclient.api.BillingFlowParams;
 import com.android.billingclient.api.BillingFlowParams.ProductDetailsParams;
 import com.android.billingclient.api.BillingResult;
+import com.android.billingclient.api.PendingPurchasesParams;
 import com.android.billingclient.api.ProductDetails;
 import com.android.billingclient.api.Purchase;
-import com.android.billingclient.api.PurchaseHistoryRecord;
-import com.android.billingclient.api.PurchaseHistoryResponseListener;
 import com.android.billingclient.api.PurchasesResponseListener;
 import com.android.billingclient.api.QueryProductDetailsParams;
-import com.android.billingclient.api.QueryPurchaseHistoryParams;
 import com.android.billingclient.api.QueryPurchasesParams;
 import com.android.vending.billing.util.Security;
 import com.google.android.gms.common.api.ApiException;
@@ -31,7 +29,6 @@ import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
 import com.google.common.util.concurrent.SettableFuture;
 
-import org.json.JSONException;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -97,7 +94,7 @@ public class SupportBillingClient {
         this.mActivity = activity;
         this.mApiKey = apiKey;
         this.mBillingClient = BillingClient.newBuilder(activity)
-                .enablePendingPurchases()
+                .enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().enablePrepaidPlans().build())
                 .setListener((billingResult, purchases) -> {
                     if (billingResult.getResponseCode() != BillingResponseCode.OK) {
                         Log.w(TAG, "Attempted to purchase an item, but received error: " + toString(billingResult));
@@ -182,14 +179,15 @@ public class SupportBillingClient {
             QueryProductDetailsParams productDetailsParams = QueryProductDetailsParams.newBuilder()
                     .setProductList(Collections.singletonList(QueryProductDetailsParams.Product.newBuilder().setProductId(productId).setProductType(productType).build()))
                     .build();
-            mBillingClient.queryProductDetailsAsync(productDetailsParams, (billingResult, productDetailsList) -> {
+            mBillingClient.queryProductDetailsAsync(productDetailsParams, (billingResult, queryProductDetailsResult) -> {
                 if (billingResult.getResponseCode() != BillingResponseCode.OK) {
                     Log.w(TAG, "Attempted to purchase an item, but received error: " + toString(billingResult));
                     productDetailsFuture.setException(new Exception());
                     return;
                 }
 
-                if (productDetailsList.isEmpty()) {
+                List<ProductDetails> productDetailsList = queryProductDetailsResult.getProductDetailsList();
+                if (productDetailsList == null || productDetailsList.isEmpty()) {
                     Log.w(TAG, "Attempted to purchase an item, but received an empty list");
                     productDetailsFuture.setException(new Exception());
                     return;
@@ -242,11 +240,11 @@ public class SupportBillingClient {
             // Connect to the Play Store. This will throw an exception if we fail to connect.
             ensureConnected();
 
-            // Look up the purchases in the Play Store's on-device cache.
+            // Look up the purchases in the Play Store.
             SettableFuture<List<Purchase>> purchasesFuture = SettableFuture.create();
             PurchasesResponseListener purchasesResponseListener = (billingResult, purchases) -> {
                 if (billingResult.getResponseCode() != BillingResponseCode.OK) {
-                    Log.w(TAG, "Attempted to query purchase history, but received error: " + toString(billingResult));
+                    Log.w(TAG, "Attempted to query purchases, but received error: " + toString(billingResult));
                     purchasesFuture.setException(new Exception());
                     return;
                 }
@@ -256,49 +254,16 @@ public class SupportBillingClient {
             mBillingClient.queryPurchasesAsync(QueryPurchasesParams.newBuilder().setProductType(ProductType.INAPP).build(), purchasesResponseListener);
             List<Purchase> purchases = purchasesFuture.get();
             if (purchases != null && !purchases.isEmpty()) {
-                // We successfully found purchases in the cache. We can report these right away.
+                // We successfully found purchases. We can report these right away.
                 for (Purchase purchase : purchases) {
                     onPurchaseFound(purchase);
                 }
                 return BillingResult.newBuilder().setResponseCode(BillingResponseCode.OK).build();
             }
 
-            // There was nothing in the Play Store's cache, but we can still make a live network query.
-            SettableFuture<List<PurchaseHistoryRecord>> purchaseHistoryRecordFuture = SettableFuture.create();
-            PurchaseHistoryResponseListener purchaseHistoryResponseListener = (billingResult, purchaseHistoryRecords) -> {
-                if (billingResult.getResponseCode() != BillingClient.BillingResponseCode.OK) {
-                    Log.w(TAG, "Attempted to query purchase history, but received error: " + toString(billingResult));
-                    purchaseHistoryRecordFuture.setException(new Exception());
-                    return;
-                }
-
-                purchaseHistoryRecordFuture.set(purchaseHistoryRecords);
-            };
-            QueryPurchaseHistoryParams queryPurchaseHistoryParams = QueryPurchaseHistoryParams.newBuilder()
-                    .setProductType(ProductType.INAPP)
-                    .build();
-            mBillingClient.queryPurchaseHistoryAsync(queryPurchaseHistoryParams, purchaseHistoryResponseListener);
-
-            // For every record that's found, report onPurchaseFound. For each product that we did
-            // not find, report onPurchaseLost.
-            List<PurchaseHistoryRecord> purchaseHistoryRecords = purchaseHistoryRecordFuture.get();
-            List<String> expectedPurchases = new ArrayList<>(productIds);
-            for (PurchaseHistoryRecord purchaseHistoryRecord : Objects.requireNonNull(purchaseHistoryRecords)) {
-                Log.d(TAG, "Discovered " + purchaseHistoryRecord.getProducts() + " in the user's purchase history");
-                Purchase purchase;
-                try {
-                    purchase = new Purchase(purchaseHistoryRecord.getOriginalJson(), purchaseHistoryRecord.getSignature());
-                } catch (JSONException e) {
-                    continue;
-                }
-                onPurchaseFound(purchase);
-                expectedPurchases.removeAll(purchaseHistoryRecord.getProducts());
-            }
-
-            // For everything the play store did not have a purchase history for, report it as such.
-            // This way, if the purchase was refunded, the app can re-adjust its state.
-            for (String productId : expectedPurchases) {
-                Log.d(TAG, "Failed to find " + productId + " in the user's purchase history");
+            // There are no active purchases. Report onPurchaseLost for each expected product.
+            for (String productId : productIds) {
+                Log.d(TAG, "Failed to find " + productId + " in the user's purchases");
                 onPurchaseLost(productId);
             }
             return BillingResult.newBuilder().setResponseCode(BillingResponseCode.OK).build();
