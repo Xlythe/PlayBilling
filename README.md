@@ -8,7 +8,7 @@ Where to Download
 -----------------
 ```groovy
 dependencies {
-  implementation 'com.xlythe:play-billing:3.1.2'
+  implementation 'com.xlythe:play-billing:3.1.3'
 }
 ```
 
