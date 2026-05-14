@@ -1,12 +1,13 @@
 package com.xlythe.playbilling;
 
 import android.app.Activity;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.WorkerThread;
-import androidx.collection.ArraySet;
 
 import com.android.billingclient.api.AcknowledgePurchaseParams;
 import com.android.billingclient.api.BillingClient;
@@ -38,6 +39,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -61,6 +63,8 @@ public class SupportBillingClient {
         if (billingClient == null) {
             billingClient = new SupportBillingClient(activity, apiKey);
             sBillingClient = new WeakReference<>(billingClient);
+        } else {
+            billingClient.mActivity = new WeakReference<>(activity);
         }
         return billingClient;
     }
@@ -75,13 +79,13 @@ public class SupportBillingClient {
     }
 
     // The context of our caller.
-    private final Activity mActivity;
+    private WeakReference<Activity> mActivity;
     // The API key of our caller.
     private final String mApiKey;
     // The BillingClient used to talk to the Play Store.
     private final BillingClient mBillingClient;
     // Listener that the client may register to be notified about purchases.
-    private final Set<PurchaseListener> mPurchaseListeners = new ArraySet<>();
+    private final Set<PurchaseListener> mPurchaseListeners = new CopyOnWriteArraySet<>();
     // An executor to run tasks on the background.
     private final ScheduledThreadPoolExecutor mExecutor = new ScheduledThreadPoolExecutor(1, new ThreadPoolExecutor.DiscardPolicy());
 
@@ -91,9 +95,9 @@ public class SupportBillingClient {
     private final Runnable mDisconnectTask = this::attemptToDisconnect;
 
     private SupportBillingClient(Activity activity, String apiKey) {
-        this.mActivity = activity;
+        this.mActivity = new WeakReference<>(activity);
         this.mApiKey = apiKey;
-        this.mBillingClient = BillingClient.newBuilder(activity)
+        this.mBillingClient = BillingClient.newBuilder(activity.getApplicationContext())
                 .enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().enablePrepaidPlans().build())
                 .setListener((billingResult, purchases) -> {
                     if (billingResult.getResponseCode() != BillingResponseCode.OK) {
@@ -145,16 +149,20 @@ public class SupportBillingClient {
                 Log.w(TAG, "Acknowledged purchase " + purchase);
             });
         }
-        for (PurchaseListener l : mPurchaseListeners) {
-            mActivity.runOnUiThread(() -> l.onPurchaseFound(purchase));
-        }
+        new Handler(Looper.getMainLooper()).post(() -> {
+            for (PurchaseListener l : mPurchaseListeners) {
+                l.onPurchaseFound(purchase);
+            }
+        });
     }
 
     private void onPurchaseLost(String productId) {
         Log.d(TAG, "User has no longer purchased " + productId);
-        for (PurchaseListener l : mPurchaseListeners) {
-            mActivity.runOnUiThread(() -> l.onPurchaseLost(productId));
-        }
+        new Handler(Looper.getMainLooper()).post(() -> {
+            for (PurchaseListener l : mPurchaseListeners) {
+                l.onPurchaseLost(productId);
+            }
+        });
     }
 
     /**
@@ -198,7 +206,11 @@ public class SupportBillingClient {
 
             // Launch the billing flow for the product.
             ProductDetails productDetails = productDetailsFuture.get();
-            BillingResult billingResult = mBillingClient.launchBillingFlow(mActivity, BillingFlowParams.newBuilder()
+            Activity activity = mActivity.get();
+            if (activity == null) {
+                throw new ApiException(new Status(BillingResponseCode.DEVELOPER_ERROR, "Activity is no longer attached"));
+            }
+            BillingResult billingResult = mBillingClient.launchBillingFlow(activity, BillingFlowParams.newBuilder()
                     .setProductDetailsParamsList(Collections.singletonList(ProductDetailsParams.newBuilder().setProductDetails(Objects.requireNonNull(productDetails)).build()))
                     .build());
             if (billingResult.getResponseCode() != BillingResponseCode.OK) {
@@ -253,16 +265,15 @@ public class SupportBillingClient {
             };
             mBillingClient.queryPurchasesAsync(QueryPurchasesParams.newBuilder().setProductType(ProductType.INAPP).build(), purchasesResponseListener);
             List<Purchase> purchases = purchasesFuture.get();
-            if (purchases != null && !purchases.isEmpty()) {
-                // We successfully found purchases. We can report these right away.
+            List<String> expectedPurchases = new ArrayList<>(productIds);
+            if (purchases != null) {
                 for (Purchase purchase : purchases) {
                     onPurchaseFound(purchase);
+                    expectedPurchases.removeAll(purchase.getProducts());
                 }
-                return BillingResult.newBuilder().setResponseCode(BillingResponseCode.OK).build();
             }
 
-            // There are no active purchases. Report onPurchaseLost for each expected product.
-            for (String productId : productIds) {
+            for (String productId : expectedPurchases) {
                 Log.d(TAG, "Failed to find " + productId + " in the user's purchases");
                 onPurchaseLost(productId);
             }
@@ -310,6 +321,8 @@ public class SupportBillingClient {
         if (Objects.requireNonNull(billingResult).getResponseCode() != BillingResponseCode.OK) {
             throw new ApiException(new Status(billingResult.getResponseCode(), "Failed to connect to the Play Store: " + toString(billingResult)));
         }
+
+        mServiceConnectionState = ServiceConnectionState.CONNECTED;
 
         // If we succeeded in connecting, then we need to start a timer to disconnect in the
         // future. Otherwise, we'll get trapped in a memory leak.
