@@ -106,7 +106,7 @@ signing {
 dependencies {
     api fileTree(include: ['*.jar'], dir: 'libs')
     api 'androidx.appcompat:appcompat:[1.7.0,)'
-    api 'com.android.billingclient:billing:[8.3.0,)'
+    api 'com.android.billingclient:billing:9.1.0'
     api 'com.google.android.gms:play-services-base:[18.10.0,)'
     api 'com.google.guava:guava:[33.3.1-android,)'
     testImplementation 'junit:junit:4.13.2'
