@@ -82,6 +82,9 @@ public class SupportBillingClientTest {
         injectMockBillingClient(mSupportBillingClient, mMockBillingClient);
         injectSameThreadExecutor(mSupportBillingClient);
 
+        when(mMockBillingClient.isFeatureSupported(BillingClient.FeatureType.SUBSCRIPTIONS)).thenReturn(
+                BillingResult.newBuilder().setResponseCode(BillingClient.BillingResponseCode.FEATURE_NOT_SUPPORTED).build());
+
         // Mock startConnection to immediately succeed
         doAnswer(invocation -> {
             BillingClientStateListener listener = invocation.getArgument(0);
@@ -200,5 +203,47 @@ public class SupportBillingClientTest {
         java.lang.ref.WeakReference<Activity> weakRef = (java.lang.ref.WeakReference<Activity>) field.get(client1);
 
         assertEquals(activity2, weakRef.get());
+    }
+
+    @Test public void transientSubscriptionFailureDoesNotRevokePurchases() {
+        when(mMockBillingClient.isFeatureSupported(BillingClient.FeatureType.SUBSCRIPTIONS)).thenReturn(
+                BillingResult.newBuilder().setResponseCode(BillingClient.BillingResponseCode.SERVICE_UNAVAILABLE).build());
+        SupportBillingClient.PurchaseListener listener = mock(SupportBillingClient.PurchaseListener.class);
+        Task<BillingResult> result = mSupportBillingClient.registerPurchaseListener(Collections.singletonList("monthly"), listener);
+        ShadowLooper.shadowMainLooper().idle();
+        org.junit.Assert.assertFalse(result.isSuccessful());
+        org.mockito.Mockito.verifyNoInteractions(listener);
+    }
+
+    @Test public void supportedSubscriptionsAreQueriedBeforeReportingAnAbsentProduct() {
+        when(mMockBillingClient.isFeatureSupported(BillingClient.FeatureType.SUBSCRIPTIONS)).thenReturn(
+                BillingResult.newBuilder().setResponseCode(BillingClient.BillingResponseCode.OK).build());
+        SupportBillingClient.PurchaseListener listener = mock(SupportBillingClient.PurchaseListener.class);
+        mSupportBillingClient.registerPurchaseListener(Collections.singletonList("monthly"), listener);
+        ShadowLooper.shadowMainLooper().idle();
+        verify(mMockBillingClient, times(2)).queryPurchasesAsync(any(), any());
+        verify(listener).onPurchaseLost("monthly");
+    }
+
+    @Test public void duplicateRegistrationDoesNotQueryAgain() {
+        SupportBillingClient.PurchaseListener listener = mock(SupportBillingClient.PurchaseListener.class);
+        mSupportBillingClient.registerPurchaseListener(Collections.singletonList("pro"), listener);
+        assertEquals(BillingClient.BillingResponseCode.DEVELOPER_ERROR,
+                mSupportBillingClient.registerPurchaseListener(Collections.singletonList("pro"), listener)
+                        .getResult().getResponseCode());
+        verify(mMockBillingClient).queryPurchasesAsync(any(), any());
+    }
+
+    @Test public void unavailableProductFailsWithoutOpeningThePurchaseUi() {
+        doAnswer(invocation -> {
+            com.android.billingclient.api.ProductDetailsResponseListener callback = invocation.getArgument(1);
+            callback.onProductDetailsResponse(BillingResult.newBuilder()
+                    .setResponseCode(BillingClient.BillingResponseCode.ITEM_UNAVAILABLE).build(), null);
+            return null;
+        }).when(mMockBillingClient).queryProductDetailsAsync(any(), any());
+        Task<BillingResult> result = mSupportBillingClient.purchaseItem("missing");
+        ShadowLooper.shadowMainLooper().idle();
+        org.junit.Assert.assertFalse(result.isSuccessful());
+        verify(mMockBillingClient, org.mockito.Mockito.never()).launchBillingFlow(any(), any());
     }
 }
