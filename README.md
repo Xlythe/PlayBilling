@@ -13,6 +13,10 @@ dependencies {
 ```
 
 
+Android version support
+-----------------
+This library requires Android 7.0 (API 24) or later, the minimum supported by its Google Play services base dependency.
+
 How to use
 -----------------
 ```java

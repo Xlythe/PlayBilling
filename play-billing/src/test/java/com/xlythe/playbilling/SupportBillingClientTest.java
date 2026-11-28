@@ -7,6 +7,7 @@ import com.android.billingclient.api.BillingClient;
 import com.android.billingclient.api.BillingClientStateListener;
 import com.android.billingclient.api.BillingFlowParams;
 import com.android.billingclient.api.BillingResult;
+import com.android.billingclient.api.ProductDetailsResponseListener;
 import com.android.billingclient.api.Purchase;
 import com.android.billingclient.api.PurchasesResponseListener;
 import com.android.billingclient.api.QueryProductDetailsParams;
@@ -26,24 +27,29 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = 34, manifest = Config.NONE)
+@Config(manifest = Config.NONE)
 public class SupportBillingClientTest {
 
     private static class SameThreadScheduledExecutor extends ScheduledThreadPoolExecutor {
@@ -55,7 +61,7 @@ public class SupportBillingClientTest {
             command.run();
         }
         @Override
-        public java.util.concurrent.ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {
+        public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {
             return null;
         }
         @Override
@@ -81,6 +87,9 @@ public class SupportBillingClientTest {
         mSupportBillingClient = SupportBillingClient.getInstance(mActivity, "test_api_key");
         injectMockBillingClient(mSupportBillingClient, mMockBillingClient);
         injectSameThreadExecutor(mSupportBillingClient);
+
+        when(mMockBillingClient.isFeatureSupported(BillingClient.FeatureType.SUBSCRIPTIONS)).thenReturn(
+                BillingResult.newBuilder().setResponseCode(BillingClient.BillingResponseCode.FEATURE_NOT_SUPPORTED).build());
 
         // Mock startConnection to immediately succeed
         doAnswer(invocation -> {
@@ -197,8 +206,50 @@ public class SupportBillingClientTest {
 
         Field field = SupportBillingClient.class.getDeclaredField("mActivity");
         field.setAccessible(true);
-        java.lang.ref.WeakReference<Activity> weakRef = (java.lang.ref.WeakReference<Activity>) field.get(client1);
+        WeakReference<Activity> weakRef = (WeakReference<Activity>) field.get(client1);
 
         assertEquals(activity2, weakRef.get());
+    }
+
+    @Test public void transientSubscriptionFailureDoesNotRevokePurchases() {
+        when(mMockBillingClient.isFeatureSupported(BillingClient.FeatureType.SUBSCRIPTIONS)).thenReturn(
+                BillingResult.newBuilder().setResponseCode(BillingClient.BillingResponseCode.SERVICE_UNAVAILABLE).build());
+        SupportBillingClient.PurchaseListener listener = mock(SupportBillingClient.PurchaseListener.class);
+        Task<BillingResult> result = mSupportBillingClient.registerPurchaseListener(Collections.singletonList("monthly"), listener);
+        ShadowLooper.shadowMainLooper().idle();
+        assertFalse(result.isSuccessful());
+        verifyNoInteractions(listener);
+    }
+
+    @Test public void supportedSubscriptionsAreQueriedBeforeReportingAnAbsentProduct() {
+        when(mMockBillingClient.isFeatureSupported(BillingClient.FeatureType.SUBSCRIPTIONS)).thenReturn(
+                BillingResult.newBuilder().setResponseCode(BillingClient.BillingResponseCode.OK).build());
+        SupportBillingClient.PurchaseListener listener = mock(SupportBillingClient.PurchaseListener.class);
+        mSupportBillingClient.registerPurchaseListener(Collections.singletonList("monthly"), listener);
+        ShadowLooper.shadowMainLooper().idle();
+        verify(mMockBillingClient, times(2)).queryPurchasesAsync(any(), any());
+        verify(listener).onPurchaseLost("monthly");
+    }
+
+    @Test public void duplicateRegistrationDoesNotQueryAgain() {
+        SupportBillingClient.PurchaseListener listener = mock(SupportBillingClient.PurchaseListener.class);
+        mSupportBillingClient.registerPurchaseListener(Collections.singletonList("pro"), listener);
+        assertEquals(BillingClient.BillingResponseCode.DEVELOPER_ERROR,
+                mSupportBillingClient.registerPurchaseListener(Collections.singletonList("pro"), listener)
+                        .getResult().getResponseCode());
+        verify(mMockBillingClient).queryPurchasesAsync(any(), any());
+    }
+
+    @Test public void unavailableProductFailsWithoutOpeningThePurchaseUi() {
+        doAnswer(invocation -> {
+            ProductDetailsResponseListener callback = invocation.getArgument(1);
+            callback.onProductDetailsResponse(BillingResult.newBuilder()
+                    .setResponseCode(BillingClient.BillingResponseCode.ITEM_UNAVAILABLE).build(), null);
+            return null;
+        }).when(mMockBillingClient).queryProductDetailsAsync(any(), any());
+        Task<BillingResult> result = mSupportBillingClient.purchaseItem("missing");
+        ShadowLooper.shadowMainLooper().idle();
+        assertFalse(result.isSuccessful());
+        verify(mMockBillingClient, never()).launchBillingFlow(any(), any());
     }
 }

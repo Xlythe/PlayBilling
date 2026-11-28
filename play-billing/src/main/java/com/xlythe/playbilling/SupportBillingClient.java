@@ -1,6 +1,7 @@
 package com.xlythe.playbilling;
 
 import android.app.Activity;
+import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -10,17 +11,16 @@ import androidx.annotation.Nullable;
 import androidx.annotation.WorkerThread;
 
 import com.android.billingclient.api.AcknowledgePurchaseParams;
-import com.android.billingclient.api.BillingClient;
-import com.android.billingclient.api.BillingClient.ProductType;
 import com.android.billingclient.api.BillingClient.BillingResponseCode;
+import com.android.billingclient.api.BillingClient.ProductType;
+import com.android.billingclient.api.BillingClient;
 import com.android.billingclient.api.BillingClientStateListener;
-import com.android.billingclient.api.BillingFlowParams;
 import com.android.billingclient.api.BillingFlowParams.ProductDetailsParams;
+import com.android.billingclient.api.BillingFlowParams;
 import com.android.billingclient.api.BillingResult;
 import com.android.billingclient.api.PendingPurchasesParams;
 import com.android.billingclient.api.ProductDetails;
 import com.android.billingclient.api.Purchase;
-import com.android.billingclient.api.PurchasesResponseListener;
 import com.android.billingclient.api.QueryProductDetailsParams;
 import com.android.billingclient.api.QueryPurchasesParams;
 import com.android.vending.billing.util.Security;
@@ -29,7 +29,6 @@ import com.google.android.gms.common.api.Status;
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
 import com.google.common.util.concurrent.SettableFuture;
-
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -40,6 +39,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -79,11 +79,11 @@ public class SupportBillingClient {
     }
 
     // The context of our caller.
-    private WeakReference<Activity> mActivity;
+    private volatile WeakReference<Activity> mActivity;
     // The API key of our caller.
     private final String mApiKey;
     // The BillingClient used to talk to the Play Store.
-    private final BillingClient mBillingClient;
+    private volatile BillingClient mBillingClient;
     // Listener that the client may register to be notified about purchases.
     private final Set<PurchaseListener> mPurchaseListeners = new CopyOnWriteArraySet<>();
     // An executor to run tasks on the background.
@@ -92,12 +92,20 @@ public class SupportBillingClient {
     // The state of our connection to the Play Store.
     private volatile ServiceConnectionState mServiceConnectionState = ServiceConnectionState.DISCONNECTED;
     // A task that's scheduled in the future to disconnect from the Play Store when we're no longer interested.
-    private final Runnable mDisconnectTask = this::attemptToDisconnect;
+    private ScheduledFuture<?> mDisconnectTimer;
 
     private SupportBillingClient(Activity activity, String apiKey) {
         this.mActivity = new WeakReference<>(activity);
         this.mApiKey = apiKey;
-        this.mBillingClient = BillingClient.newBuilder(activity.getApplicationContext())
+        this.mApplication = activity.getApplicationContext();
+        mExecutor.setRemoveOnCancelPolicy(true);
+        this.mBillingClient = createClient();
+    }
+
+    private final Context mApplication;
+
+    private BillingClient createClient() {
+        return BillingClient.newBuilder(mApplication)
                 .enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().enablePrepaidPlans().build())
                 .setListener((billingResult, purchases) -> {
                     if (billingResult.getResponseCode() != BillingResponseCode.OK) {
@@ -116,7 +124,7 @@ public class SupportBillingClient {
 
     private void onPurchaseFound(Purchase purchase) {
         if (!Security.verifyPurchase(mApiKey, purchase.getOriginalJson(), purchase.getSignature())) {
-            Log.w(TAG, "Failed to verify purchase " + purchase + ". Ignoring.");
+            Log.w(TAG, "Purchase signature verification failed");
             for (String productId : purchase.getProducts()) {
                 onPurchaseLost(productId);
             }
@@ -125,14 +133,14 @@ public class SupportBillingClient {
 
 
         if (purchase.getPurchaseState() != Purchase.PurchaseState.PURCHASED) {
-            Log.w(TAG, "Purchase " + purchase + " has not been paid for yet. Ignoring.");
+            Log.d(TAG, "Purchase is not paid yet");
             for (String productId : purchase.getProducts()) {
                 onPurchaseLost(productId);
             }
             return;
         }
 
-        Log.d(TAG, "User purchased " + purchase);
+        Log.d(TAG, "Verified purchase");
         if (!purchase.isAcknowledged()) {
             AcknowledgePurchaseParams acknowledgePurchaseParams =
                     AcknowledgePurchaseParams.newBuilder()
@@ -146,7 +154,7 @@ public class SupportBillingClient {
                     return;
                 }
 
-                Log.w(TAG, "Acknowledged purchase " + purchase);
+                Log.d(TAG, "Acknowledged purchase");
             });
         }
         new Handler(Looper.getMainLooper()).post(() -> {
@@ -178,7 +186,12 @@ public class SupportBillingClient {
      * {@link PurchaseListener#onPurchaseFound(Purchase)} will be called.
      */
     public Task<BillingResult> purchaseItem(String productId, @ProductType String productType) {
-        Callable<BillingResult> callable = () -> {
+        return purchaseItem(productId, productType, null);
+    }
+
+    /** Select a specific offer when a product has more than one eligible price or base plan. */
+    public Task<BillingResult> purchaseItem(String productId, @ProductType String productType, @Nullable String offerToken) {
+        Callable<ProductDetails> callable = () -> {
             // Connect to the Play Store. This will throw an exception if we fail to connect.
             ensureConnected();
 
@@ -190,14 +203,14 @@ public class SupportBillingClient {
             mBillingClient.queryProductDetailsAsync(productDetailsParams, (billingResult, queryProductDetailsResult) -> {
                 if (billingResult.getResponseCode() != BillingResponseCode.OK) {
                     Log.w(TAG, "Attempted to purchase an item, but received error: " + toString(billingResult));
-                    productDetailsFuture.setException(new Exception());
+                    productDetailsFuture.setException(new ApiException(new Status(billingResult.getResponseCode(), toString(billingResult))));
                     return;
                 }
 
                 List<ProductDetails> productDetailsList = queryProductDetailsResult.getProductDetailsList();
                 if (productDetailsList == null || productDetailsList.isEmpty()) {
                     Log.w(TAG, "Attempted to purchase an item, but received an empty list");
-                    productDetailsFuture.setException(new Exception());
+                    productDetailsFuture.setException(new ApiException(new Status(BillingResponseCode.ITEM_UNAVAILABLE, "No eligible product details")));
                     return;
                 }
 
@@ -205,22 +218,31 @@ public class SupportBillingClient {
             });
 
             // Launch the billing flow for the product.
-            ProductDetails productDetails = productDetailsFuture.get();
+            return productDetailsFuture.get(30, TimeUnit.SECONDS);
+        };
+        // Google Play requires the purchase UI to be launched from the main thread.
+        return Tasks.call(mExecutor, callable).onSuccessTask(productDetails -> {
             Activity activity = mActivity.get();
-            if (activity == null) {
+            if (activity == null || activity.isFinishing() || activity.isDestroyed()) {
                 throw new ApiException(new Status(BillingResponseCode.DEVELOPER_ERROR, "Activity is no longer attached"));
             }
-            BillingResult billingResult = mBillingClient.launchBillingFlow(activity, BillingFlowParams.newBuilder()
-                    .setProductDetailsParamsList(Collections.singletonList(ProductDetailsParams.newBuilder().setProductDetails(Objects.requireNonNull(productDetails)).build()))
-                    .build());
-            if (billingResult.getResponseCode() != BillingResponseCode.OK) {
-                throw new ApiException(new Status(billingResult.getResponseCode(), "Failed to purchase an item from the Play Store: " + toString(billingResult)));
+            ProductDetailsParams.Builder details = ProductDetailsParams.newBuilder().setProductDetails(productDetails);
+            String token = offerToken;
+            if (token == null && ProductType.SUBS.equals(productType)) {
+                List<ProductDetails.SubscriptionOfferDetails> offers = productDetails.getSubscriptionOfferDetails();
+                if (offers == null || offers.size() != 1) {
+                    throw new ApiException(new Status(BillingResponseCode.DEVELOPER_ERROR, "Select a subscription offer token"));
+                }
+                token = offers.get(0).getOfferToken();
             }
-            return billingResult;
-        };
-
-        return Tasks.call(mExecutor, callable)
-                .addOnSuccessListener(result -> Log.v(TAG, "Successfully purchased item " + productId))
+            if (token != null) details.setOfferToken(token);
+            BillingResult result = mBillingClient.launchBillingFlow(activity, BillingFlowParams.newBuilder()
+                    .setProductDetailsParamsList(Collections.singletonList(details.build())).build());
+            if (result.getResponseCode() != BillingResponseCode.OK) {
+                throw new ApiException(new Status(result.getResponseCode(), toString(result)));
+            }
+            return Tasks.forResult(result);
+        })
                 .addOnFailureListener(e -> Log.w(TAG, "Failed to purchase item " + productId));
     }
 
@@ -231,11 +253,10 @@ public class SupportBillingClient {
      * {@link #purchaseItem(String)} results in a successful purchase.
      */
     public Task<BillingResult> registerPurchaseListener(List<String> productIds, PurchaseListener purchaseListener) {
-        if (mPurchaseListeners.contains(purchaseListener)) {
+        if (!mPurchaseListeners.add(purchaseListener)) {
             return Tasks.forResult(BillingResult.newBuilder().setResponseCode(BillingResponseCode.DEVELOPER_ERROR).build());
         }
 
-        mPurchaseListeners.add(purchaseListener);
         return queryPurchases(productIds);
     }
 
@@ -253,24 +274,17 @@ public class SupportBillingClient {
             ensureConnected();
 
             // Look up the purchases in the Play Store.
-            SettableFuture<List<Purchase>> purchasesFuture = SettableFuture.create();
-            PurchasesResponseListener purchasesResponseListener = (billingResult, purchases) -> {
-                if (billingResult.getResponseCode() != BillingResponseCode.OK) {
-                    Log.w(TAG, "Attempted to query purchases, but received error: " + toString(billingResult));
-                    purchasesFuture.setException(new Exception());
-                    return;
-                }
-
-                purchasesFuture.set(purchases);
-            };
-            mBillingClient.queryPurchasesAsync(QueryPurchasesParams.newBuilder().setProductType(ProductType.INAPP).build(), purchasesResponseListener);
-            List<Purchase> purchases = purchasesFuture.get();
+            List<Purchase> purchases = new ArrayList<>(ownedProducts(ProductType.INAPP));
+            BillingResult subscriptions = mBillingClient.isFeatureSupported(BillingClient.FeatureType.SUBSCRIPTIONS);
+            if (subscriptions.getResponseCode() == BillingResponseCode.OK) {
+                purchases.addAll(ownedProducts(ProductType.SUBS));
+            } else if (subscriptions.getResponseCode() != BillingResponseCode.FEATURE_NOT_SUPPORTED) {
+                throw new ApiException(new Status(subscriptions.getResponseCode(), toString(subscriptions)));
+            }
             List<String> expectedPurchases = new ArrayList<>(productIds);
-            if (purchases != null) {
-                for (Purchase purchase : purchases) {
-                    onPurchaseFound(purchase);
-                    expectedPurchases.removeAll(purchase.getProducts());
-                }
+            for (Purchase purchase : purchases) {
+                onPurchaseFound(purchase);
+                expectedPurchases.removeAll(purchase.getProducts());
             }
 
             for (String productId : expectedPurchases) {
@@ -283,6 +297,21 @@ public class SupportBillingClient {
         return Tasks.call(mExecutor, callable);
     }
 
+    private List<Purchase> ownedProducts(@ProductType String type) throws Exception {
+        SettableFuture<List<Purchase>> future = SettableFuture.create();
+        mBillingClient.queryPurchasesAsync(QueryPurchasesParams.newBuilder().setProductType(type).build(),
+                (result, purchases) -> {
+                    if (result.getResponseCode() == BillingResponseCode.OK) future.set(purchases);
+                    else future.setException(new ApiException(new Status(result.getResponseCode(), toString(result))));
+                });
+        return future.get(30, TimeUnit.SECONDS);
+    }
+
+    private void resetDisconnectTimer() {
+        if (mDisconnectTimer != null) mDisconnectTimer.cancel(false);
+        mDisconnectTimer = mExecutor.schedule(this::attemptToDisconnect, 15, TimeUnit.SECONDS);
+    }
+
     // Silently connects to the Play Store, if we're not already connected.
     public Task<BillingResult> verifyBillingSupport() {
         return Tasks.call(mExecutor, this::ensureConnected);
@@ -293,8 +322,7 @@ public class SupportBillingClient {
         // A shortcut! We're already connected, so we can no-op here.
         if (mServiceConnectionState == ServiceConnectionState.CONNECTED) {
             // Reset the disconnect timer, since there's user interaction.
-            mExecutor.remove(mDisconnectTask);
-            mExecutor.schedule(mDisconnectTask, 15, TimeUnit.SECONDS);
+            resetDisconnectTimer();
             return BillingResult.newBuilder().setResponseCode(BillingResponseCode.OK).build();
         }
 
@@ -317,7 +345,7 @@ public class SupportBillingClient {
 
         // If we failed to connect, throw an exception so the Task will return a failure.
         // It's not smart enough to know how to read the internals of BillingResult.
-        BillingResult billingResult = future.get();
+        BillingResult billingResult = future.get(30, TimeUnit.SECONDS);
         if (Objects.requireNonNull(billingResult).getResponseCode() != BillingResponseCode.OK) {
             throw new ApiException(new Status(billingResult.getResponseCode(), "Failed to connect to the Play Store: " + toString(billingResult)));
         }
@@ -326,8 +354,7 @@ public class SupportBillingClient {
 
         // If we succeeded in connecting, then we need to start a timer to disconnect in the
         // future. Otherwise, we'll get trapped in a memory leak.
-        mExecutor.remove(mDisconnectTask);
-        mExecutor.schedule(mDisconnectTask, 15, TimeUnit.SECONDS);
+        resetDisconnectTimer();
         return billingResult;
     }
 
@@ -339,13 +366,13 @@ public class SupportBillingClient {
 
         // Unable to disconnect until the user is done with the connection.
         if (!mPurchaseListeners.isEmpty()) {
-            mExecutor.remove(mDisconnectTask);
-            mExecutor.schedule(mDisconnectTask, 15, TimeUnit.SECONDS);
+            resetDisconnectTimer();
             return;
         }
 
         // Goodbye.
         mBillingClient.endConnection();
+        mBillingClient = createClient();
         mServiceConnectionState = ServiceConnectionState.DISCONNECTED;
     }
 

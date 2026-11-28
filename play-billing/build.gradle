@@ -2,20 +2,23 @@ plugins {
     id 'com.android.library'
     id 'maven-publish'
     id 'signing'
-    id 'com.gradleup.nmcp' version '1.5.0'
+    id 'com.gradleup.nmcp' version '1.6.2'
 }
 
 Properties projectProperties = new Properties()
 projectProperties.load(rootProject.file('gradle.properties').newDataInputStream())
 
 Properties localProperties = new Properties()
-localProperties.load(project.rootProject.file('local.properties').newDataInputStream())
+File localFile = rootProject.file('local.properties')
+if (localFile.exists()) localFile.withInputStream { localProperties.load(it) }
 
 android {
-    compileSdkVersion 37
+    enableKotlin = false
+    compileSdk 37
 
     defaultConfig {
-        minSdkVersion 23
+        targetSdk 37
+        minSdk 24
     }
     buildTypes {
         release {
@@ -41,6 +44,10 @@ android {
         targetSdk 37
         unitTests {
             includeAndroidResources = true
+            all {
+                maxHeapSize = '2g'
+                jvmArgs '--add-exports=java.base/jdk.internal.access=ALL-UNNAMED'
+            }
         }
     }
 }
@@ -105,19 +112,19 @@ signing {
 
 dependencies {
     api fileTree(include: ['*.jar'], dir: 'libs')
-    api 'androidx.appcompat:appcompat:[1.7.0,)'
-    api 'com.android.billingclient:billing:9.1.0'
-    api 'com.google.android.gms:play-services-base:[18.10.0,)'
-    api 'com.google.guava:guava:[33.3.1-android,)'
-    testImplementation 'junit:junit:4.13.2'
-    testImplementation 'org.mockito:mockito-core:5.23.0'
-    testImplementation 'org.robolectric:robolectric:4.16.1'
-    testImplementation 'androidx.test:core:1.7.0'
+    api 'androidx.appcompat:appcompat:[1.8.0,)'
+    api 'com.android.billingclient:billing:[9.1.0,)'
+    api 'com.google.android.gms:play-services-base:[18.11.1,)'
+    api 'com.google.guava:guava:[33.8.0-android,)'
+    testImplementation 'junit:junit:[4.13.2,)'
+    testImplementation 'org.mockito:mockito-core:[5.25.0,)'
+    testImplementation 'org.robolectric:robolectric:[4.18.1,)'
+    testImplementation 'androidx.test:core:[1.7.0,)'
     constraints {
-        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.2.20") {
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk7:[2.2.20,)") {
             because("kotlin-stdlib-jdk7 is now a part of kotlin-stdlib")
         }
-        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.2.20") {
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:[2.2.20,)") {
             because("kotlin-stdlib-jdk8 is now a part of kotlin-stdlib")
         }
     }
