@@ -7,6 +7,7 @@ import com.android.billingclient.api.BillingClient;
 import com.android.billingclient.api.BillingClientStateListener;
 import com.android.billingclient.api.BillingFlowParams;
 import com.android.billingclient.api.BillingResult;
+import com.android.billingclient.api.ProductDetailsResponseListener;
 import com.android.billingclient.api.Purchase;
 import com.android.billingclient.api.PurchasesResponseListener;
 import com.android.billingclient.api.QueryProductDetailsParams;
@@ -26,9 +27,11 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
@@ -43,7 +46,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = 34, manifest = Config.NONE)
+@Config(manifest = Config.NONE)
 public class SupportBillingClientTest {
 
     private static class SameThreadScheduledExecutor extends ScheduledThreadPoolExecutor {
@@ -55,7 +58,7 @@ public class SupportBillingClientTest {
             command.run();
         }
         @Override
-        public java.util.concurrent.ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {
+        public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {
             return null;
         }
         @Override
@@ -200,7 +203,7 @@ public class SupportBillingClientTest {
 
         Field field = SupportBillingClient.class.getDeclaredField("mActivity");
         field.setAccessible(true);
-        java.lang.ref.WeakReference<Activity> weakRef = (java.lang.ref.WeakReference<Activity>) field.get(client1);
+        WeakReference<Activity> weakRef = (WeakReference<Activity>) field.get(client1);
 
         assertEquals(activity2, weakRef.get());
     }
@@ -236,7 +239,7 @@ public class SupportBillingClientTest {
 
     @Test public void unavailableProductFailsWithoutOpeningThePurchaseUi() {
         doAnswer(invocation -> {
-            com.android.billingclient.api.ProductDetailsResponseListener callback = invocation.getArgument(1);
+            ProductDetailsResponseListener callback = invocation.getArgument(1);
             callback.onProductDetailsResponse(BillingResult.newBuilder()
                     .setResponseCode(BillingClient.BillingResponseCode.ITEM_UNAVAILABLE).build(), null);
             return null;

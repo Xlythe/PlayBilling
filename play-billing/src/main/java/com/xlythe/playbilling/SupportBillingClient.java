@@ -1,6 +1,7 @@
 package com.xlythe.playbilling;
 
 import android.app.Activity;
+import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -10,12 +11,12 @@ import androidx.annotation.Nullable;
 import androidx.annotation.WorkerThread;
 
 import com.android.billingclient.api.AcknowledgePurchaseParams;
-import com.android.billingclient.api.BillingClient;
-import com.android.billingclient.api.BillingClient.ProductType;
 import com.android.billingclient.api.BillingClient.BillingResponseCode;
+import com.android.billingclient.api.BillingClient.ProductType;
+import com.android.billingclient.api.BillingClient;
 import com.android.billingclient.api.BillingClientStateListener;
-import com.android.billingclient.api.BillingFlowParams;
 import com.android.billingclient.api.BillingFlowParams.ProductDetailsParams;
+import com.android.billingclient.api.BillingFlowParams;
 import com.android.billingclient.api.BillingResult;
 import com.android.billingclient.api.PendingPurchasesParams;
 import com.android.billingclient.api.ProductDetails;
@@ -29,7 +30,6 @@ import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
 import com.google.common.util.concurrent.SettableFuture;
 
-
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -39,6 +39,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -91,7 +92,7 @@ public class SupportBillingClient {
     // The state of our connection to the Play Store.
     private volatile ServiceConnectionState mServiceConnectionState = ServiceConnectionState.DISCONNECTED;
     // A task that's scheduled in the future to disconnect from the Play Store when we're no longer interested.
-    private java.util.concurrent.ScheduledFuture<?> mDisconnectTimer;
+    private ScheduledFuture<?> mDisconnectTimer;
 
     private SupportBillingClient(Activity activity, String apiKey) {
         this.mActivity = new WeakReference<>(activity);
@@ -101,7 +102,7 @@ public class SupportBillingClient {
         this.mBillingClient = createClient();
     }
 
-    private final android.content.Context mApplication;
+    private final Context mApplication;
 
     private BillingClient createClient() {
         return BillingClient.newBuilder(mApplication)

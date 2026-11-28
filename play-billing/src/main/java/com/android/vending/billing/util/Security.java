@@ -1,5 +1,10 @@
 package com.android.vending.billing.util;
 
+import android.text.TextUtils;
+import android.util.Log;
+
+import com.android.billingclient.api.Purchase;
+
 import java.security.InvalidKeyException;
 import java.security.KeyFactory;
 import java.security.NoSuchAlgorithmException;
@@ -8,9 +13,6 @@ import java.security.Signature;
 import java.security.SignatureException;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.X509EncodedKeySpec;
-
-import android.text.TextUtils;
-import android.util.Log;
 
 /**
  * Security-related methods. For a secure implementation, all of this code
@@ -30,7 +32,7 @@ public class Security {
     /**
      * Verifies that the data was signed with the given signature, and returns
      * the verified purchase. The data is in JSON format and signed with a
-     * private key. The data also contains the {@link com.android.billingclient.api.Purchase} and product
+     * private key. The data also contains the {@link Purchase} and product
      * ID of the purchase.
      *
      * @param base64PublicKey
