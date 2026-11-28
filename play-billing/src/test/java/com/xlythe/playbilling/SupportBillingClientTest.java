@@ -36,13 +36,16 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @RunWith(RobolectricTestRunner.class)
@@ -214,8 +217,8 @@ public class SupportBillingClientTest {
         SupportBillingClient.PurchaseListener listener = mock(SupportBillingClient.PurchaseListener.class);
         Task<BillingResult> result = mSupportBillingClient.registerPurchaseListener(Collections.singletonList("monthly"), listener);
         ShadowLooper.shadowMainLooper().idle();
-        org.junit.Assert.assertFalse(result.isSuccessful());
-        org.mockito.Mockito.verifyNoInteractions(listener);
+        assertFalse(result.isSuccessful());
+        verifyNoInteractions(listener);
     }
 
     @Test public void supportedSubscriptionsAreQueriedBeforeReportingAnAbsentProduct() {
@@ -246,7 +249,7 @@ public class SupportBillingClientTest {
         }).when(mMockBillingClient).queryProductDetailsAsync(any(), any());
         Task<BillingResult> result = mSupportBillingClient.purchaseItem("missing");
         ShadowLooper.shadowMainLooper().idle();
-        org.junit.Assert.assertFalse(result.isSuccessful());
-        verify(mMockBillingClient, org.mockito.Mockito.never()).launchBillingFlow(any(), any());
+        assertFalse(result.isSuccessful());
+        verify(mMockBillingClient, never()).launchBillingFlow(any(), any());
     }
 }
